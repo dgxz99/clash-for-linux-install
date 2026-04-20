@@ -155,11 +155,25 @@ $(env | grep -i 'proxy=')"
 }
 
 function clashstatus() {
+    placeholder_is_active >&/dev/null && {
+        placeholder_status "$@"
+        return 0
+    }
+    _tunstatus >&/dev/null && placeholder_sudo_is_active >&/dev/null && {
+        placeholder_sudo_status "$@"
+        return 0
+    }
     placeholder_status "$@"
-    placeholder_is_active >&/dev/null
+    return 1
 }
 
 function clashlog() {
+    placeholder_is_active >&/dev/null || {
+        _tunstatus >&/dev/null && {
+            placeholder_sudo_log "$@"
+            return 0
+        }
+    }
     placeholder_log "$@"
 }
 
@@ -330,7 +344,7 @@ _tunstatus() {
 }
 _tunoff() {
     _tunstatus >/dev/null || return 0
-    sudo placeholder_stop
+    placeholder_sudo_stop
     # 强制恢复终端输出处理
     stty opost 2>/dev/null
     clashstatus >&/dev/null || {
@@ -343,7 +357,7 @@ _tunoff() {
     _tunstatus >&/dev/null && _failcat "Tun 模式关闭失败"
 }
 _sudo_restart() {
-    sudo placeholder_stop
+    placeholder_sudo_stop
     placeholder_sudo_start
     sleep 0.5
     # 强制恢复终端输出处理
@@ -351,7 +365,8 @@ _sudo_restart() {
 }
 _tunon() {
     _tunstatus 2>/dev/null && return 0
-    sudo placeholder_stop
+    placeholder_stop >/dev/null 2>&1
+    placeholder_sudo_stop >/dev/null 2>&1
     "$BIN_YQ" -i '.tun.enable = true' "$CLASH_CONFIG_MIXIN"
     _merge_config
     placeholder_sudo_start
@@ -359,7 +374,7 @@ _tunon() {
     # 强制恢复终端输出处理
     stty opost 2>/dev/null
 
-    clashstatus >&/dev/null || _error_quit "Tun 模式开启失败"
+    placeholder_sudo_is_active >&/dev/null || _error_quit "Tun 模式开启失败"
     local fail_msg="Start TUN listening error|unsupported kernel version"
     local ok_msg="Tun adapter listening at|TUN listening iface"
     clashlog | grep -E -m1 -qs "$fail_msg" && {

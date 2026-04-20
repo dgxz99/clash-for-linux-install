@@ -176,10 +176,11 @@ _unzip_zip() {
 _detect_init() {
     [ -z "$INIT_TYPE" ] && INIT_TYPE=$(readlink /proc/1/exe)
     grep -qsE "docker|kubepods|containerd|podman|lxc" /proc/1/cgroup && INIT_TYPE='nohup'
+
     _is_root || {
-        INIT_TYPE='nohup'
         FILE_LOG="${CLASH_RESOURCES_DIR}/${KERNEL_NAME}.log"
         FILE_PID="${CLASH_RESOURCES_DIR}/${KERNEL_NAME}.pid"
+        [[ "$INIT_TYPE" == *systemd* ]] && _has_systemd_user || INIT_TYPE='nohup'
     }
 
     service_log=(less '<' $FILE_LOG)
@@ -192,7 +193,11 @@ _detect_init() {
 
     case "${INIT_TYPE}" in
     *systemd)
-        service_log=($_SUDO journalctl -u "$KERNEL_NAME")
+        if _is_root || _is_regular_sudo; then
+            service_log=($_SUDO journalctl -u "$KERNEL_NAME")
+        else
+            service_log=(journalctl --user -u "$KERNEL_NAME")
+        fi
         service_follow_log=("${service_log[@]}" -q -f -n 0)
         _systemd
         ;;
@@ -213,7 +218,18 @@ _detect_init() {
         _nohup
         ;;
     esac
+    ((${#service_sudo_start[@]})) || service_sudo_start=("${service_start[@]}")
+    ((${#service_sudo_stop[@]})) || service_sudo_stop=("${service_stop[@]}")
+    ((${#service_sudo_status[@]})) || service_sudo_status=("${service_status[@]}")
+    ((${#service_sudo_is_active[@]})) || service_sudo_is_active=("${service_is_active[@]}")
+    ((${#service_sudo_log[@]})) || service_sudo_log=("${service_log[@]}")
     INIT_TYPE=$(basename "$INIT_TYPE")
+}
+
+_has_systemd_user() {
+    command -v systemctl >/dev/null 2>&1 || return 1
+    [ -n "$XDG_RUNTIME_DIR" ] || return 1
+    systemctl --user show-environment >/dev/null 2>&1
 }
 _openrc() {
     service_src="${SCRIPT_INIT_DIR}/OpenRC.sh"
@@ -271,18 +287,49 @@ _sysvinit() {
 # shellcheck disable=SC2206
 _systemd() {
     service_src="${SCRIPT_INIT_DIR}/systemd.sh"
-    service_target="/etc/systemd/system/${KERNEL_NAME}.service"
+    if _is_root || _is_regular_sudo; then
+        service_target="/etc/systemd/system/${KERNEL_NAME}.service"
+        service_reload=($_SUDO systemctl daemon-reload)
 
-    service_reload=($_SUDO systemctl daemon-reload)
+        service_enable=($_SUDO systemctl enable "$KERNEL_NAME")
+        service_disable=($_SUDO systemctl disable "$KERNEL_NAME")
 
-    service_enable=($_SUDO systemctl enable "$KERNEL_NAME")
-    service_disable=($_SUDO systemctl disable "$KERNEL_NAME")
+        service_start=($_SUDO systemctl start "$KERNEL_NAME")
+        service_stop=($_SUDO systemctl stop "$KERNEL_NAME")
+        service_restart=($_SUDO systemctl restart "$KERNEL_NAME")
+        service_status=($_SUDO systemctl status "$KERNEL_NAME")
+        service_is_active=($_SUDO systemctl is-active "$KERNEL_NAME")
+        service_sudo_start=("${service_start[@]}")
+        service_sudo_stop=($_SUDO systemctl stop "$KERNEL_NAME")
+        service_sudo_status=("${service_status[@]}")
+        service_sudo_is_active=("${service_is_active[@]}")
+        service_sudo_log=("${service_log[@]}")
+        SYSTEMD_WANTED_BY='multi-user.target'
+        SYSTEMD_CAPABILITIES='CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SYS_TIME CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE'
+        return 0
+    fi
 
-    service_start=($_SUDO systemctl start "$KERNEL_NAME")
-    service_stop=($_SUDO systemctl stop "$KERNEL_NAME")
-    service_restart=($_SUDO systemctl restart "$KERNEL_NAME")
-    service_status=($_SUDO systemctl status "$KERNEL_NAME")
-    service_is_active=($_SUDO systemctl is-active "$KERNEL_NAME")
+    service_target="${HOME}/.config/systemd/user/${KERNEL_NAME}.service"
+    service_reload=(systemctl --user daemon-reload)
+
+    service_enable=(systemctl --user enable "$KERNEL_NAME")
+    service_disable=(systemctl --user disable "$KERNEL_NAME")
+
+    service_start=(systemctl --user start "$KERNEL_NAME")
+    service_stop=(systemctl --user stop "$KERNEL_NAME")
+    service_restart=(systemctl --user restart "$KERNEL_NAME")
+    service_status=(systemctl --user status "$KERNEL_NAME")
+    service_is_active=(systemctl --user is-active "$KERNEL_NAME")
+
+    service_sudo_start=(sudo sh -c '"nohup' "$BIN_KERNEL" -d "$CLASH_RESOURCES_DIR" -f "$CLASH_CONFIG_RUNTIME" '<' '/dev/null' '>' "$FILE_LOG" '2>\&1' '\&"')
+    service_sudo_stop=(sudo pkill -9 -f "$BIN_KERNEL")
+    service_sudo_status=(sudo pgrep -fa "$BIN_KERNEL")
+    service_sudo_is_active=(sudo pgrep -fa "$BIN_KERNEL")
+    service_sudo_log=(sudo tail -n 200 "$FILE_LOG")
+
+    INIT_TYPE='systemd-user'
+    SYSTEMD_WANTED_BY='default.target'
+    SYSTEMD_CAPABILITIES=''
 }
 _nohup() {
     service_enable=(false)
@@ -292,8 +339,12 @@ _nohup() {
     service_start=('(' nohup "$BIN_KERNEL" -d "$CLASH_RESOURCES_DIR" -f "$CLASH_CONFIG_RUNTIME" '>' "$FILE_LOG" '2>\&1' '\&' ')')
     # sudo 启动：nohup 完全脱离终端，关闭所有标准流
     service_sudo_start=(sudo sh -c '"nohup' "$BIN_KERNEL" -d "$CLASH_RESOURCES_DIR" -f "$CLASH_CONFIG_RUNTIME" '<' '/dev/null' '>' "$FILE_LOG" '2>\&1' '\&"')
+    service_sudo_stop=(sudo pkill -9 -f "$BIN_KERNEL")
     service_status=(pgrep -fa "$BIN_KERNEL")
     service_is_active=(pgrep -fa "$BIN_KERNEL")
+    service_sudo_status=(sudo pgrep -fa "$BIN_KERNEL")
+    service_sudo_is_active=(sudo pgrep -fa "$BIN_KERNEL")
+    service_sudo_log=(sudo tail -n 200 "$FILE_LOG")
     service_stop=(pkill -9 -f "$BIN_KERNEL")
 }
 
@@ -305,6 +356,7 @@ _install_service() {
     local cmd_full="${BIN_KERNEL} -d ${CLASH_RESOURCES_DIR} -f ${CLASH_CONFIG_RUNTIME}"
 
     [ -n "$service_src" ] && {
+        mkdir -p "$(dirname "$service_target")"
         /usr/bin/install -D -m +x "$service_src" "$service_target"
         ((${#service_add[@]})) && "${service_add[@]}"
         sed -i \
@@ -315,16 +367,21 @@ _install_service() {
             -e "s#placeholder_pid_file#$FILE_PID#g" \
             -e "s#placeholder_kernel_name#$KERNEL_NAME#g" \
             -e "s#placeholder_kernel_desc#$kernel_desc#g" \
+            -e "s#placeholder_systemd_capabilities#$SYSTEMD_CAPABILITIES#g" \
+            -e "s#placeholder_wanted_by#$SYSTEMD_WANTED_BY#g" \
             "$service_target"
     }
-    [ "$INIT_TYPE" != "nohup" ] && service_sudo_start=("${service_start[@]}")
     sed -i \
         -e "s#placeholder_start#${service_start[*]}#g" \
         -e "s#placeholder_sudo_start#${service_sudo_start[*]}#g" \
+        -e "s#placeholder_sudo_stop#${service_sudo_stop[*]}#g" \
         -e "s#placeholder_status#${service_status[*]}#g" \
         -e "s#placeholder_is_active#${service_is_active[*]}#g" \
+        -e "s#placeholder_sudo_status#${service_sudo_status[*]}#g" \
+        -e "s#placeholder_sudo_is_active#${service_sudo_is_active[*]}#g" \
         -e "s#placeholder_stop#${service_stop[*]}#g" \
         -e "s#placeholder_log#${service_log[*]}#g" \
+        -e "s#placeholder_sudo_log#${service_sudo_log[*]}#g" \
         -e "s#placeholder_follow_log#${service_follow_log[*]}#g" \
         -e "s#placeholder_watch_proxy#${service_watch_proxy[*]}#g" \
         "$CLASH_CMD_DIR/clashctl.sh" "$CLASH_CMD_DIR/common.sh"
@@ -369,7 +426,11 @@ $source_clashctl
 # watch_proxy
 $end_flag
 EOF
-    [ -n "$SHELL_RC_FISH" ] && /usr/bin/install "$SCRIPT_CMD_FISH" "$SHELL_RC_FISH"
+    [ -n "$SHELL_RC_FISH" ] && {
+        mkdir -p "$(dirname "$SHELL_RC_FISH")"
+        /usr/bin/install "$SCRIPT_CMD_FISH" "$SHELL_RC_FISH"
+        sed -i "s#placeholder_clashctl_script#${CLASH_CMD_DIR}/clashctl.sh#g" "$SHELL_RC_FISH"
+    }
     $source_clashctl
 }
 _revoke_rc() {
@@ -398,5 +459,5 @@ _is_root() {
 
 _quit() {
     _is_regular_sudo && exec su "$SUDO_USER"
-    exec "$SHELL" -i -c "$*"
+    exec "$(_get_interactive_shell)" -i -c "$*"
 }

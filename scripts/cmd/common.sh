@@ -104,6 +104,13 @@ function _failcat() {
     return 1
 }
 
+_get_interactive_shell() {
+    local shell_path="${CLASH_SHELL:-$SHELL}"
+    [ -z "$shell_path" ] && [ -n "$USER" ] && shell_path=$(awk -F: -v user="$USER" '$1==user{print $7}' /etc/passwd)
+    [ -n "$shell_path" ] || shell_path=/bin/sh
+    echo "$shell_path"
+}
+
 function _error_quit() {
     [ $# -gt 0 ] && {
         local color=#f92f60
@@ -112,7 +119,8 @@ function _error_quit() {
         local msg="${emoji} $1"
         _color_log "$color" "$msg"
     }
-    exec $SHELL -i
+    [ -n "$CLASH_NO_EXEC_SHELL" ] && return 1
+    exec "$(_get_interactive_shell)" -i
 }
 
 function _valid_config() {
