@@ -386,6 +386,10 @@ _install_service() {
             -e "s#placeholder_systemd_capabilities#$SYSTEMD_CAPABILITIES#g" \
             -e "s#placeholder_wanted_by#$SYSTEMD_WANTED_BY#g" \
             "$service_target"
+        [ -z "$SYSTEMD_CAPABILITIES" ] && sed -i \
+            -e '/^CapabilityBoundingSet=$/d' \
+            -e '/^AmbientCapabilities=$/d' \
+            "$service_target"
     }
     sed -i \
         -e "s#placeholder_start#${service_start[*]}#g" \
