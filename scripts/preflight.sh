@@ -246,6 +246,7 @@ _has_systemd_user() {
 _openrc() {
     service_src="${SCRIPT_INIT_DIR}/OpenRC.sh"
     service_target="/etc/init.d/$KERNEL_NAME"
+    service_mode=0755
 
     service_enable=(rc-update add "$KERNEL_NAME" default)
     service_disable=(rc-update del "$KERNEL_NAME" default)
@@ -259,6 +260,7 @@ _openrc() {
 _runit() {
     service_src="${SCRIPT_INIT_DIR}/runit.sh"
     service_target="/etc/sv/${KERNEL_NAME}/run"
+    service_mode=0755
     service_del=(rm -rf "/etc/sv/${KERNEL_NAME:-mihomo}")
 
     service_reload=(sleep 2)
@@ -274,6 +276,7 @@ _runit() {
 _sysvinit() {
     service_src="${SCRIPT_INIT_DIR}/SysVinit.sh"
     service_target="/etc/init.d/$KERNEL_NAME"
+    service_mode=0755
 
     command -v chkconfig >&/dev/null && {
         service_add=(chkconfig --add "$KERNEL_NAME")
@@ -299,6 +302,7 @@ _sysvinit() {
 # shellcheck disable=SC2206
 _systemd() {
     service_src="${SCRIPT_INIT_DIR}/systemd.sh"
+    service_mode=0644
     if _is_root || _is_regular_sudo; then
         service_target="/etc/systemd/system/${KERNEL_NAME}.service"
         service_reload=($_SUDO systemctl daemon-reload)
@@ -369,7 +373,7 @@ _install_service() {
 
     [ -n "$service_src" ] && {
         mkdir -p "$(dirname "$service_target")"
-        /usr/bin/install -D -m +x "$service_src" "$service_target"
+        /usr/bin/install -D -m "${service_mode:-0755}" "$service_src" "$service_target"
         ((${#service_add[@]})) && "${service_add[@]}"
         sed -i \
             -e "s#placeholder_cmd_path#$cmd_path#g" \
