@@ -772,6 +772,6 @@ Commands:
 Global Options:
   -h, --help            显示帮助信息
 
-For more help on how to use clashctl, head to https://github.com/nelvko/clash-for-linux-install
+For more help on how to use clashctl, head to https://github.com/dgxz99/clash-for-linux-install
 EOF
 }

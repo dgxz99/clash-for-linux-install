@@ -180,7 +180,7 @@ _detect_init() {
     _is_root || {
         FILE_LOG="${CLASH_RESOURCES_DIR}/${KERNEL_NAME}.log"
         FILE_PID="${CLASH_RESOURCES_DIR}/${KERNEL_NAME}.pid"
-        [[ "$INIT_TYPE" == *systemd* ]] && _has_systemd_user || INIT_TYPE='nohup'
+        _has_systemd_user && INIT_TYPE='systemd' || INIT_TYPE='nohup'
     }
 
     service_log=(less '<' $FILE_LOG)
