@@ -68,6 +68,7 @@ _detect_proxy_port() {
 }
 
 function clashon() {
+    _sync_user_tun_state
     _detect_proxy_port
     clashstatus >&/dev/null || placeholder_start
     clashstatus >&/dev/null || {
@@ -331,7 +332,36 @@ EOF
     esac
 }
 
+_is_user_tun_mode() {
+    [ "$INIT_TYPE" = 'systemd-user' ]
+}
+
+_prepare_user_tun_runtime() {
+    "$BIN_YQ" -i '.tun.enable = true' "$CLASH_CONFIG_MIXIN"
+    _merge_config
+    cat "$CLASH_CONFIG_RUNTIME" >"$CLASH_CONFIG_TUN_RUNTIME"
+    "$BIN_YQ" -i '.tun.enable = false' "$CLASH_CONFIG_MIXIN"
+    _merge_config
+}
+
+_sync_user_tun_state() {
+    _is_user_tun_mode || return 0
+    placeholder_sudo_is_active >&/dev/null && [ -f "$CLASH_CONFIG_TUN_RUNTIME" ] && return 0
+    rm -f "$CLASH_CONFIG_TUN_RUNTIME"
+    "$BIN_YQ" -e '.tun.enable == true' "$CLASH_CONFIG_MIXIN" >&/dev/null || return 0
+    "$BIN_YQ" -i '.tun.enable = false' "$CLASH_CONFIG_MIXIN"
+    _merge_config
+}
+
 _tunstatus() {
+    _is_user_tun_mode && {
+        placeholder_sudo_is_active >&/dev/null && [ -f "$CLASH_CONFIG_TUN_RUNTIME" ] && {
+            _okcat 'Tun 状态：启用'
+            return 0
+        }
+        _failcat 'Tun 状态：关闭'
+        return 1
+    }
     local tun_status=$("$BIN_YQ" '.tun.enable' "${CLASH_CONFIG_RUNTIME}")
     case $tun_status in
     true)
@@ -347,9 +377,16 @@ _tunoff() {
     placeholder_sudo_stop
     # 强制恢复终端输出处理
     stty opost 2>/dev/null
-    clashstatus >&/dev/null || {
+    _is_user_tun_mode && {
+        rm -f "$CLASH_CONFIG_TUN_RUNTIME"
         "$BIN_YQ" -i '.tun.enable = false' "$CLASH_CONFIG_MIXIN"
         _merge_config
+    }
+    clashstatus >&/dev/null || {
+        _is_user_tun_mode || {
+            "$BIN_YQ" -i '.tun.enable = false' "$CLASH_CONFIG_MIXIN"
+            _merge_config
+        }
         clashon >/dev/null
         _okcat "Tun 模式已关闭"
         return 0
@@ -358,7 +395,13 @@ _tunoff() {
 }
 _sudo_restart() {
     placeholder_sudo_stop
-    placeholder_sudo_start
+    if _is_user_tun_mode; then
+        _prepare_user_tun_runtime
+        local tun_log="${CLASH_RESOURCES_DIR}/${KERNEL_NAME}.log"
+        sudo sh -c "nohup \"$BIN_KERNEL\" -d \"$CLASH_RESOURCES_DIR\" -f \"$CLASH_CONFIG_TUN_RUNTIME\" < /dev/null > \"$tun_log\" 2>&1 &"
+    else
+        placeholder_sudo_start
+    fi
     sleep 0.5
     # 强制恢复终端输出处理
     stty opost 2>/dev/null
@@ -367,9 +410,15 @@ _tunon() {
     _tunstatus 2>/dev/null && return 0
     placeholder_stop >/dev/null 2>&1
     placeholder_sudo_stop >/dev/null 2>&1
-    "$BIN_YQ" -i '.tun.enable = true' "$CLASH_CONFIG_MIXIN"
-    _merge_config
-    placeholder_sudo_start
+    if _is_user_tun_mode; then
+        _prepare_user_tun_runtime
+        local tun_log="${CLASH_RESOURCES_DIR}/${KERNEL_NAME}.log"
+        sudo sh -c "nohup \"$BIN_KERNEL\" -d \"$CLASH_RESOURCES_DIR\" -f \"$CLASH_CONFIG_TUN_RUNTIME\" < /dev/null > \"$tun_log\" 2>&1 &"
+    else
+        "$BIN_YQ" -i '.tun.enable = true' "$CLASH_CONFIG_MIXIN"
+        _merge_config
+        placeholder_sudo_start
+    fi
     sleep 0.5
     # 强制恢复终端输出处理
     stty opost 2>/dev/null
