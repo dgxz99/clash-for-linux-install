@@ -237,6 +237,18 @@ _prepare_systemd_user_env() {
     }
 }
 
+_build_root_process_cmd() {
+    local action=$1
+    case $action in
+    stop)
+        printf '%s' "sudo sh -c 'pkill -9 -f \"^\\\$1( |\\\$)\"' _ $(printf '%q' "$BIN_KERNEL")"
+        ;;
+    status | is_active)
+        printf '%s' "sudo sh -c 'pgrep -fa \"^\\\$1( |\\\$)\"' _ $(printf '%q' "$BIN_KERNEL")"
+        ;;
+    esac
+}
+
 _has_systemd_user() {
     command -v systemctl >/dev/null 2>&1 || return 1
     _prepare_systemd_user_env
@@ -338,9 +350,9 @@ _systemd() {
     service_is_active=(systemctl --user is-active "$KERNEL_NAME")
 
     service_sudo_start=(sudo sh -c '"nohup' "$BIN_KERNEL" -d "$CLASH_RESOURCES_DIR" -f "$CLASH_CONFIG_RUNTIME" '<' '/dev/null' '>' "$FILE_LOG" '2>\&1' '\&"')
-    service_sudo_stop=(sudo pkill -9 -f "$BIN_KERNEL")
-    service_sudo_status=(sudo pgrep -fa "$BIN_KERNEL")
-    service_sudo_is_active=(sudo pgrep -fa "$BIN_KERNEL")
+    service_sudo_stop=($(_build_root_process_cmd stop))
+    service_sudo_status=($(_build_root_process_cmd status))
+    service_sudo_is_active=($(_build_root_process_cmd is_active))
     service_sudo_log=(sudo tail -n 200 "$FILE_LOG")
 
     INIT_TYPE='systemd-user'
@@ -355,11 +367,11 @@ _nohup() {
     service_start=('(' nohup "$BIN_KERNEL" -d "$CLASH_RESOURCES_DIR" -f "$CLASH_CONFIG_RUNTIME" '>' "$FILE_LOG" '2>\&1' '\&' ')')
     # sudo 启动：nohup 完全脱离终端，关闭所有标准流
     service_sudo_start=(sudo sh -c '"nohup' "$BIN_KERNEL" -d "$CLASH_RESOURCES_DIR" -f "$CLASH_CONFIG_RUNTIME" '<' '/dev/null' '>' "$FILE_LOG" '2>\&1' '\&"')
-    service_sudo_stop=(sudo pkill -9 -f "$BIN_KERNEL")
+    service_sudo_stop=($(_build_root_process_cmd stop))
     service_status=(pgrep -fa "$BIN_KERNEL")
     service_is_active=(pgrep -fa "$BIN_KERNEL")
-    service_sudo_status=(sudo pgrep -fa "$BIN_KERNEL")
-    service_sudo_is_active=(sudo pgrep -fa "$BIN_KERNEL")
+    service_sudo_status=($(_build_root_process_cmd status))
+    service_sudo_is_active=($(_build_root_process_cmd is_active))
     service_sudo_log=(sudo tail -n 200 "$FILE_LOG")
     service_stop=(pkill -9 -f "$BIN_KERNEL")
 }
