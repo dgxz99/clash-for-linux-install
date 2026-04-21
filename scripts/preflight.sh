@@ -226,8 +226,20 @@ _detect_init() {
     INIT_TYPE=$(basename "$INIT_TYPE")
 }
 
+_prepare_systemd_user_env() {
+    [ -n "$XDG_RUNTIME_DIR" ] || {
+        local runtime_dir="/run/user/$(id -u)"
+        [ -d "$runtime_dir" ] && export XDG_RUNTIME_DIR="$runtime_dir"
+    }
+    [ -n "$DBUS_SESSION_BUS_ADDRESS" ] || {
+        [ -n "$XDG_RUNTIME_DIR" ] && [ -S "$XDG_RUNTIME_DIR/bus" ] &&
+            export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+    }
+}
+
 _has_systemd_user() {
     command -v systemctl >/dev/null 2>&1 || return 1
+    _prepare_systemd_user_env
     [ -n "$XDG_RUNTIME_DIR" ] || return 1
     systemctl --user show-environment >/dev/null 2>&1
 }

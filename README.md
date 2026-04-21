@@ -1,10 +1,12 @@
 # Linux 一键安装 Clash
 
-![GitHub License](https://img.shields.io/github/license/nelvko/clash-for-linux-install)
-![GitHub top language](https://img.shields.io/github/languages/top/nelvko/clash-for-linux-install)
+![GitHub License](https://img.shields.io/github/license/dgxz99/clash-for-linux-install)
+![GitHub top language](https://img.shields.io/github/languages/top/dgxz99/clash-for-linux-install)
 ![GitHub Repo stars](https://img.shields.io/github/stars/nelvko/clash-for-linux-install)
 
 ![preview](resources/preview.png)
+
+> ‼️注意：本仓库为个人 `fork` 自用版本，可能包含针对个人场景的调整；若你更关注通用性、稳定更新、完整文档与社区支持，建议优先使用源仓库 [nelvko/clash-for-linux-install](https://github.com/nelvko/clash-for-linux-install)
 
 ## ✨ 功能特性
 
@@ -21,7 +23,7 @@
 在终端中执行以下命令即可完成安装：
 
 ```bash
-git clone --branch master --depth 1 https://gh-proxy.org/https://github.com/nelvko/clash-for-linux-install.git \
+git clone --branch master --depth 1 https://gh-proxy.org/https://github.com/dgxz99/clash-for-linux-install.git \
   && cd clash-for-linux-install \
   && bash install.sh
 ```
