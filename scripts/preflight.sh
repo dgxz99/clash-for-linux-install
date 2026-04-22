@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 
+# 安装前置逻辑
+# 负责环境校验、二进制下载、服务脚本生成以及 shell 集成
+
 RESOURCES_BASE_DIR=".${CLASH_RESOURCES_DIR#"$CLASH_BASE_DIR"}"
 
 ZIP_BASE_DIR=".${CLASH_RESOURCES_DIR#"$CLASH_BASE_DIR"}/zip"
 
+# 项目脚本目录
 SCRIPT_BASE_DIR='scripts'
 SCRIPT_INIT_DIR="${SCRIPT_BASE_DIR}/init"
 SCRIPT_CMD_DIR="${SCRIPT_BASE_DIR}/cmd"
 SCRIPT_CMD_FISH="${SCRIPT_CMD_DIR}/clashctl.fish"
 
+# 安装后的命令脚本目录
 CLASH_CMD_DIR="${CLASH_BASE_DIR}/$SCRIPT_CMD_DIR"
 
+# 默认日志与 pid 文件位置
 FILE_LOG="/var/log/${KERNEL_NAME}.log"
 FILE_PID="/run/${KERNEL_NAME}.pid"
 
+# 校验安装依赖命令是否齐全
 _valid_required() {
     local required_cmds=("xz" "pgrep" "curl" "tar" 'unzip')
     local missing=()
@@ -23,6 +30,7 @@ _valid_required() {
     [ "${#missing[@]}" -gt 0 ] && _error_quit "请先安装以下命令：${missing[*]}"
 }
 
+# 安装路径、执行 shell 与依赖总校验
 _valid() {
     _valid_required
 
@@ -35,6 +43,7 @@ _valid() {
     [ -z "$ZSH_VERSION" ] && [ -z "$BASH_VERSION" ] && _error_quit "仅支持：bash、zsh 执行"
 }
 
+# 解析安装参数
 _parse_args() {
     for arg in "$@"; do
         case $arg in
@@ -51,6 +60,7 @@ _parse_args() {
     done
 }
 
+# 根据所选内核准备需要的压缩包并解压到安装目录
 _prepare_zip() {
     _load_zip >&/dev/null
     local required_zips=()
@@ -78,12 +88,16 @@ _prepare_zip() {
     BIN_KERNEL="${BIN_BASE_DIR}/$KERNEL_NAME"
     _unzip_zip
 }
+
+# 读取本地已存在的压缩包路径
 _load_zip() {
     ZIP_CLASH=$(echo "${ZIP_BASE_DIR}"/clash*)
     ZIP_MIHOMO=$(echo "${ZIP_BASE_DIR}"/mihomo*)
     ZIP_YQ=$(echo "${ZIP_BASE_DIR}"/yq*)
     ZIP_SUBCONVERTER=$(echo "${ZIP_BASE_DIR}"/subconverter*)
 }
+
+# 按 CPU 架构下载所需二进制资源
 _download_zip() {
     (($#)) || return 0
     local url_clash url_mihomo url_yq url_subconverter
@@ -153,6 +167,8 @@ _download_zip() {
     _valid_zip "${target_zips[@]}"
     _load_zip >&/dev/null
 }
+
+# 校验下载到的压缩包是否完整可用
 _valid_zip() {
     (($#)) || return 1
     local zip fail_zips=()
@@ -162,6 +178,8 @@ _valid_zip() {
 
     ((${#fail_zips[@]})) && _error_quit "文件验证失败：${fail_zips[*]} 请删除后重试，或自行下载对应版本至 ${ZIP_BASE_DIR} 目录"
 }
+
+# 将压缩包中的二进制和前端资源释放到目标目录
 _unzip_zip() {
     _valid_zip "$ZIP_KERNEL" "$ZIP_YQ" "$ZIP_SUBCONVERTER" "$ZIP_UI"
     /usr/bin/install -D <(gzip -dc "$ZIP_KERNEL") "$BIN_KERNEL"
@@ -173,6 +191,7 @@ _unzip_zip() {
 }
 
 # shellcheck disable=SC2206
+# 检测当前系统适合使用的服务管理方式
 _detect_init() {
     [ -z "$INIT_TYPE" ] && INIT_TYPE=$(readlink /proc/1/exe)
     grep -qsE "docker|kubepods|containerd|podman|lxc" /proc/1/cgroup && INIT_TYPE='nohup'
@@ -226,6 +245,7 @@ _detect_init() {
     INIT_TYPE=$(basename "$INIT_TYPE")
 }
 
+# 为 systemd --user 场景补齐运行环境变量
 _prepare_systemd_user_env() {
     [ -n "$XDG_RUNTIME_DIR" ] || {
         local runtime_dir="/run/user/$(id -u)"
@@ -237,6 +257,7 @@ _prepare_systemd_user_env() {
     }
 }
 
+# 构建需要 sudo 执行的进程控制命令
 _build_root_process_cmd() {
     local action=$1
     case $action in
@@ -249,12 +270,15 @@ _build_root_process_cmd() {
     esac
 }
 
+# 判断当前用户是否可用 systemd --user
 _has_systemd_user() {
     command -v systemctl >/dev/null 2>&1 || return 1
     _prepare_systemd_user_env
     [ -n "$XDG_RUNTIME_DIR" ] || return 1
     systemctl --user show-environment >/dev/null 2>&1
 }
+
+# OpenRC 服务模板参数
 _openrc() {
     service_src="${SCRIPT_INIT_DIR}/OpenRC.sh"
     service_target="/etc/init.d/$KERNEL_NAME"
@@ -269,6 +293,8 @@ _openrc() {
     service_status=(rc-service "$KERNEL_NAME" status)
     service_is_active=(rc-service "$KERNEL_NAME" status)
 }
+
+# runit 服务模板参数
 _runit() {
     service_src="${SCRIPT_INIT_DIR}/runit.sh"
     service_target="/etc/sv/${KERNEL_NAME}/run"
@@ -285,6 +311,8 @@ _runit() {
     service_status=(sv status "$KERNEL_NAME")
     service_is_active=(sv status "$KERNEL_NAME" \| grep -qs '^run')
 }
+
+# SysVinit 服务模板参数
 _sysvinit() {
     service_src="${SCRIPT_INIT_DIR}/SysVinit.sh"
     service_target="/etc/init.d/$KERNEL_NAME"
@@ -312,6 +340,8 @@ _sysvinit() {
     service_is_active=(service "$KERNEL_NAME" status)
 }
 # shellcheck disable=SC2206
+
+# systemd 服务模板参数
 _systemd() {
     service_src="${SCRIPT_INIT_DIR}/systemd.sh"
     service_mode=0644
@@ -359,6 +389,8 @@ _systemd() {
     SYSTEMD_WANTED_BY='default.target'
     SYSTEMD_CAPABILITIES=''
 }
+
+# 无服务管理器场景下的 nohup 兜底方案
 _nohup() {
     service_enable=(false)
     service_disable=(false)
@@ -376,6 +408,7 @@ _nohup() {
     service_stop=(pkill -9 -f "$BIN_KERNEL")
 }
 
+# 将模板渲染成实际服务文件，并回填到命令脚本占位符
 _install_service() {
     local kernel_desc="$KERNEL_NAME Daemon, A[nother] Clash Kernel."
 
@@ -421,6 +454,8 @@ _install_service() {
     "${service_enable[@]}" >&/dev/null && _okcat '🚀' '已设置开机自启'
     ((${#service_reload[@]})) && "${service_reload[@]}"
 }
+
+# 卸载服务文件并撤销开机自启
 _uninstall_service() {
     _detect_init
     "${service_disable[@]}" >&/dev/null
@@ -429,6 +464,7 @@ _uninstall_service() {
     ((${#service_reload[@]})) && "${service_reload[@]}"
 }
 
+# 检测当前用户可写的 shell 启动文件
 _detect_rc() {
     local home=$HOME
     _is_regular_sudo && home=$(awk -F: -v user="$SUDO_USER" '$1==user{print $6}' /etc/passwd)
@@ -445,6 +481,8 @@ _detect_rc() {
     start_flag="# clashctl START"
     end_flag="# clashctl END"
 }
+
+# 注入 clashctl 命令到 bash、zsh、fish
 _apply_rc() {
     _detect_rc
     local source_clashctl=". $CLASH_CMD_DIR/clashctl.sh"
@@ -465,12 +503,15 @@ EOF
     }
     $source_clashctl
 }
+
+# 从 shell 启动文件中移除 clashctl 注入内容
 _revoke_rc() {
     _detect_rc
     sed -i --follow-symlinks "/$start_flag/,/$end_flag/d" "$SHELL_RC_BASH" "$SHELL_RC_ZSH" 2>/dev/null
     [ -n "$SHELL_RC_FISH" ] && rm -f "$SHELL_RC_FISH" 2>/dev/null
 }
 
+# 回写关键运行参数到安装目录内的 .env
 _set_envs() {
     _set_env INIT_TYPE "$INIT_TYPE"
     _set_env KERNEL_NAME "$KERNEL_NAME"
@@ -478,18 +519,27 @@ _set_envs() {
     _set_env VERSION_MIHOMO "$VERSION_MIHOMO"
 }
 
+# 生成随机字符串，用于初始化 Web 密钥等场景
 _get_random_val() {
     cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 6
 }
 
+# 判断是否处于 sudo 普通用户场景
 _is_regular_sudo() {
     _is_root && [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != 'root' ]
 }
+
+# 判断当前是否为 root
 _is_root() {
     [ "$(id -u)" -eq 0 ]
 }
 
+# 退出安装流程，必要时先执行收尾命令
 _quit() {
-    _is_regular_sudo && exec su "$SUDO_USER"
-    exec "$(_get_interactive_shell)" -i -c "$*"
+    local cmd="$*"
+    [ -n "$cmd" ] && {
+        eval "$cmd"
+        _finish_context $?
+    }
+    _finish_context 0
 }

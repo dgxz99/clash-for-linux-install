@@ -1,4 +1,6 @@
 ### BEGIN INIT INFO
+# SysVinit 服务模板
+# 安装时会将 placeholder 替换为实际服务信息
 # Provides: placeholder_kernel_name
 # Required-Start: $network $local_fs $remote_fs
 # Required-Stop: $network $local_fs $remote_fs

@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 
+# clashctl 主命令脚本
+# 对外提供代理控制、Tun、订阅、日志和升级等操作入口
+
 THIS_SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE:-${(%):-%N}}")")
 . "$THIS_SCRIPT_DIR/common.sh"
 
+# 根据运行时配置导出系统代理变量
 _set_system_proxy() {
     local mixed_port=$("$BIN_YQ" '.mixed-port // ""' "$CLASH_CONFIG_RUNTIME")
     local http_port=$("$BIN_YQ" '.port // ""' "$CLASH_CONFIG_RUNTIME")
@@ -28,6 +32,8 @@ _set_system_proxy() {
     export no_proxy=$no_proxy_addr
     export NO_PROXY=$no_proxy
 }
+
+# 清理当前 shell 中的系统代理变量
 _unset_system_proxy() {
     unset http_proxy
     unset https_proxy
@@ -38,6 +44,8 @@ _unset_system_proxy() {
     unset no_proxy
     unset NO_PROXY
 }
+
+# 检测代理端口冲突并在未运行时自动改写到可用端口
 _detect_proxy_port() {
     local mixed_port=$("$BIN_YQ" '.mixed-port // ""' "$CLASH_CONFIG_RUNTIME")
     local http_port=$("$BIN_YQ" '.port // ""' "$CLASH_CONFIG_RUNTIME")
@@ -67,6 +75,7 @@ _detect_proxy_port() {
     ((count)) && _merge_config
 }
 
+# 启动代理环境
 function clashon() {
     _sync_user_tun_state
     _detect_proxy_port
@@ -79,6 +88,7 @@ function clashon() {
     _okcat '已开启代理环境'
 }
 
+# 在交互 shell 首次加载时按需自动开启代理
 watch_proxy() {
     [ -z "$http_proxy" ] && {
         # [[ "$0" == -* ]] && { # 登录式shell
@@ -88,6 +98,7 @@ watch_proxy() {
     }
 }
 
+# 关闭代理环境
 function clashoff() {
     clashstatus >&/dev/null && {
         placeholder_stop >/dev/null
@@ -104,11 +115,13 @@ function clashoff() {
     _okcat '已关闭代理环境'
 }
 
+# 重启代理环境
 clashrestart() {
     clashoff >/dev/null
     clashon
 }
 
+# 查看或切换系统代理状态
 function clashproxy() {
     case "$1" in
     -h | --help)
@@ -155,6 +168,7 @@ $(env | grep -i 'proxy=')"
     esac
 }
 
+# 查看内核运行状态，兼容普通模式与 Tun 模式
 function clashstatus() {
     placeholder_is_active >&/dev/null && {
         placeholder_status "$@"
@@ -168,6 +182,7 @@ function clashstatus() {
     return 1
 }
 
+# 查看运行日志
 function clashlog() {
     placeholder_is_active >&/dev/null || {
         _tunstatus >&/dev/null && {
@@ -178,6 +193,7 @@ function clashlog() {
     placeholder_log "$@"
 }
 
+# 输出 Web 控制台访问地址
 function clashui() {
     _detect_ext_addr
     clashstatus >&/dev/null || clashon >/dev/null
@@ -201,6 +217,7 @@ function clashui() {
     printf "\n"
 }
 
+# 将基础配置与 mixin 深度合并为运行时配置
 _merge_config() {
     cat "$CLASH_CONFIG_RUNTIME" >"$CLASH_CONFIG_TEMP" 2>/dev/null
     # shellcheck disable=SC2016
@@ -284,6 +301,7 @@ _merge_config() {
     }
 }
 
+# 合并配置后重启内核使其生效
 _merge_config_restart() {
     _merge_config
     placeholder_stop >/dev/null
@@ -295,9 +313,13 @@ _merge_config_restart() {
     placeholder_start >/dev/null
     sleep 0.1
 }
+
+# 读取当前 Web 控制台密钥
 _get_secret() {
     "$BIN_YQ" '.secret // ""' "$CLASH_CONFIG_RUNTIME"
 }
+
+# 查看或修改 Web 控制台密钥
 function clashsecret() {
     case "$1" in
     -h | --help)
@@ -332,10 +354,12 @@ EOF
     esac
 }
 
+# 判断当前是否为 systemd-user 的 Tun 运行模式
 _is_user_tun_mode() {
     [ "$INIT_TYPE" = 'systemd-user' ]
 }
 
+# 为 systemd-user 场景生成单独的 Tun 运行时配置
 _prepare_user_tun_runtime() {
     "$BIN_YQ" -i '.tun.enable = true' "$CLASH_CONFIG_MIXIN"
     _merge_config
@@ -344,6 +368,7 @@ _prepare_user_tun_runtime() {
     _merge_config
 }
 
+# 同步用户态 Tun 配置与实际运行状态
 _sync_user_tun_state() {
     _is_user_tun_mode || return 0
     placeholder_sudo_is_active >&/dev/null && [ -f "$CLASH_CONFIG_TUN_RUNTIME" ] && return 0
@@ -353,6 +378,7 @@ _sync_user_tun_state() {
     _merge_config
 }
 
+# 查询 Tun 状态
 _tunstatus() {
     _is_user_tun_mode && {
         placeholder_sudo_is_active >&/dev/null && [ -f "$CLASH_CONFIG_TUN_RUNTIME" ] && {
@@ -372,6 +398,8 @@ _tunstatus() {
         ;;
     esac
 }
+
+# 关闭 Tun 模式
 _tunoff() {
     _tunstatus >/dev/null || return 0
     placeholder_sudo_stop
@@ -393,6 +421,8 @@ _tunoff() {
     }
     _tunstatus >&/dev/null && _failcat "Tun 模式关闭失败"
 }
+
+# 以 sudo 权限重启 Tun 相关进程
 _sudo_restart() {
     placeholder_sudo_stop
     if _is_user_tun_mode; then
@@ -406,6 +436,8 @@ _sudo_restart() {
     # 强制恢复终端输出处理
     stty opost 2>/dev/null
 }
+
+# 开启 Tun 模式
 _tunon() {
     _tunstatus 2>/dev/null && return 0
     placeholder_stop >/dev/null 2>&1
@@ -441,6 +473,7 @@ _tunon() {
     _okcat "Tun 模式已开启"
 }
 
+# Tun 子命令入口
 function clashtun() {
     case "$1" in
     -h | --help)
@@ -470,6 +503,7 @@ EOF
     esac
 }
 
+# 查看或编辑 mixin 配置
 function clashmixin() {
     case "$1" in
     -h | --help)
@@ -507,6 +541,7 @@ EOF
     esac
 }
 
+# 触发内核自升级
 function clashupgrade() {
     for arg in "$@"; do
         case $arg in
@@ -568,6 +603,7 @@ EOF
     _failcat "内核升级失败，请检查网络或稍后重试"
 }
 
+# 订阅管理总入口
 function clashsub() {
     case "$1" in
     add)
@@ -617,6 +653,8 @@ EOF
         ;;
     esac
 }
+
+# 新增订阅
 _sub_add() {
     local url=$1
     [ -z "$url" ] && {
@@ -647,6 +685,8 @@ _sub_add() {
     _logging_sub "➕ 已添加订阅：[$id] $url"
     _okcat '🎉' "订阅已添加：[$id] $url"
 }
+
+# 删除订阅
 _sub_del() {
     local id=$1
     [ -z "$id" ] && {
@@ -664,9 +704,13 @@ _sub_del() {
     _logging_sub "➖ 已删除订阅：[$id] $url"
     _okcat '🎉' "订阅已删除：[$id] $url"
 }
+
+# 列出订阅元数据
 _sub_list() {
     "$BIN_YQ" "$CLASH_PROFILES_META"
 }
+
+# 切换当前使用的订阅
 _sub_use() {
     "$BIN_YQ" -e '.profiles // [] | length == 0' "$CLASH_PROFILES_META" >&/dev/null &&
         _error_quit "当前无可用订阅，请先添加订阅"
@@ -686,12 +730,18 @@ _sub_use() {
     _logging_sub "🔥 订阅已切换为：[$id] $url"
     _okcat '🔥' '订阅已生效'
 }
+
+# 通过订阅 id 获取配置文件路径
 _get_path_by_id() {
     "$BIN_YQ" -e ".profiles[] | select(.id == \"$1\") | .path" "$CLASH_PROFILES_META" 2>/dev/null
 }
+
+# 通过订阅 id 获取原始订阅地址
 _get_url_by_id() {
     "$BIN_YQ" -e ".profiles[] | select(.id == \"$1\") | .url" "$CLASH_PROFILES_META" 2>/dev/null
 }
+
+# 更新订阅，可选启用定时更新和强制转换
 _sub_update() {
     local arg is_convert
     for arg in "$@"; do
@@ -739,13 +789,18 @@ _sub_update() {
     [ "$use" = "$id" ] && clashsub use "$use" && return
     _okcat '订阅已更新'
 }
+
+# 写入订阅操作日志
 _logging_sub() {
     echo "$(date +"%Y-%m-%d %H:%M:%S") $1" >>"${CLASH_PROFILES_LOG}"
 }
+
+# 查看订阅操作日志
 _sub_log() {
     tail <"${CLASH_PROFILES_LOG}" "$@"
 }
 
+# clashctl 顶层命令分发
 function clashctl() {
     case "$1" in
     on)
@@ -799,6 +854,7 @@ function clashctl() {
     esac
 }
 
+# 帮助信息输出
 clashhelp() {
     cat <<EOF
     
