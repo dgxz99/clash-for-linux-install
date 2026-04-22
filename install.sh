@@ -6,7 +6,15 @@
 
 # 安装前校验与参数解析
 _valid
-_parse_args "$@"
+
+# 识别订阅链接参数
+for arg in "$@"; do
+    case $arg in
+    http*)
+        CLASH_CONFIG_URL=$arg
+        ;;
+    esac
+done
 
 # 准备二进制资源并识别当前运行环境
 _prepare_zip

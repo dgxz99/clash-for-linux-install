@@ -6,6 +6,9 @@
 
 . "$(dirname "$(dirname "$THIS_SCRIPT_DIR")")/.env"
 
+# 默认固定使用 mihomo 内核
+KERNEL_NAME="${KERNEL_NAME:-mihomo}"
+
 # 运行时配置文件路径
 CLASH_RESOURCES_DIR="${CLASH_BASE_DIR}/resources"
 CLASH_CONFIG_BASE="${CLASH_RESOURCES_DIR}/config.yaml"

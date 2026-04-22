@@ -10,12 +10,12 @@
 
 ## ✨ 功能特性
 
-- 支持一键安装 `mihomo` 与 `clash` 代理内核。
+- 支持一键安装 `mihomo` 代理内核。
 - 兼容 `root` 与普通用户环境。
 - 普通用户在 `systemd` 环境下支持使用 `systemd --user` 方式自启动。
 - 适配主流 `Linux` 发行版，并兼容 `AutoDL` 等容器化环境。
 - 自动检测端口占用情况，在冲突时随机分配可用端口。
-- 自动识别系统架构与初始化系统，下载匹配的内核与依赖，并生成对应的服务管理配置。
+- 自动识别系统架构与初始化系统，下载匹配的 `mihomo` 最新 release 与依赖，并生成对应的服务管理配置。
 - 在需要时调用 [subconverter](https://github.com/tindy2013/subconverter) 进行本地订阅转换。
 
 ## 🚀 一键安装
@@ -162,7 +162,7 @@ $ clashtun on
 😼 Tun 模式已开启
 ```
 
-- 作用：实现本机及 `Docker` 等容器的所有流量路由到 `clash` 代理、DNS 劫持等。
+- 作用：实现本机及 `Docker` 等容器的所有流量路由到代理内核、DNS 劫持等。
 - 原理：[clash-verge-rev](https://www.clashverge.dev/guide/term.html#tun)、 [clash.wiki](https://clash.wiki/premium/tun-device.html)。
 - `Tun` 模式默认需要通过 `sudo` 提权运行。
 - 若订阅中的节点 `server` 使用域名，默认 `mixin.yaml` 已预置 `proxy-server-nameserver`，可避免开启 `Tun` + `fake-ip` 后节点域名被解析为 fake-ip 而导致代理握手失败；如使用自定义 DNS 配置，建议保留该项，并在必要时再配合 `fake-ip-filter`。
@@ -180,7 +180,6 @@ bash uninstall.sh
 
 ## 🔗 引用
 
-- [clash](https://clash.wiki/)
 - [mihomo](https://github.com/MetaCubeX/mihomo)
 - [subconverter](https://github.com/tindy2013/subconverter)
 - [yq](https://github.com/mikefarah/yq)

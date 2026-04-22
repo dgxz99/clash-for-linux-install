@@ -43,93 +43,110 @@ _valid() {
     [ -z "$ZSH_VERSION" ] && [ -z "$BASH_VERSION" ] && _error_quit "仅支持：bash、zsh 执行"
 }
 
-# 解析安装参数
-_parse_args() {
-    for arg in "$@"; do
-        case $arg in
-        mihomo)
-            KERNEL_NAME=mihomo
-            ;;
-        clash)
-            KERNEL_NAME=clash
-            ;;
-        http*)
-            CLASH_CONFIG_URL=$arg
-            ;;
-        esac
-    done
-}
-
 # 根据所选内核准备需要的压缩包并解压到安装目录
 _prepare_zip() {
     _load_zip >&/dev/null
     local required_zips=()
-    case "${KERNEL_NAME}" in
-    clash)
-        [ ! -f "$ZIP_CLASH" ] && required_zips+=("clash")
-        ;;
-    mihomo | *)
-        [ ! -f "$ZIP_MIHOMO" ] && required_zips+=("mihomo")
-        ;;
-    esac
+    [ ! -f "$ZIP_MIHOMO" ] && required_zips+=("mihomo")
     [ ! -f "$ZIP_YQ" ] && required_zips+=("yq")
     [ ! -f "$ZIP_SUBCONVERTER" ] && required_zips+=("subconverter")
 
     _download_zip "${required_zips[@]}"
 
-    case "${KERNEL_NAME}" in
-    clash)
-        ZIP_KERNEL="$ZIP_CLASH"
-        ;;
-    mihomo | *)
-        ZIP_KERNEL="$ZIP_MIHOMO"
-        ;;
-    esac
+    ZIP_KERNEL="$ZIP_MIHOMO"
     BIN_KERNEL="${BIN_BASE_DIR}/$KERNEL_NAME"
     _unzip_zip
 }
 
 # 读取本地已存在的压缩包路径
 _load_zip() {
-    ZIP_CLASH=$(echo "${ZIP_BASE_DIR}"/clash*)
     ZIP_MIHOMO=$(echo "${ZIP_BASE_DIR}"/mihomo*)
     ZIP_YQ=$(echo "${ZIP_BASE_DIR}"/yq*)
     ZIP_SUBCONVERTER=$(echo "${ZIP_BASE_DIR}"/subconverter*)
 }
 
+# 获取 x86_64 平台对应的 mihomo 优化等级
+_get_x86_64_optimization_level() {
+    local flags=$(grep -m1 '^flags' /proc/cpuinfo)
+    local level=v1
+    grep -qw sse4_2 <<<"$flags" && grep -qw popcnt <<<"$flags" && level=v2
+    grep -qw avx2 <<<"$flags" && grep -qw fma <<<"$flags" && level=v3
+    echo "$level"
+}
+
+# 通过 GitHub releases/latest 跳转解析 mihomo 最新 tag
+_resolve_latest_mihomo_version() {
+    local latest_url="https://github.com/MetaCubeX/mihomo/releases/latest"
+    local proxy_url="${URL_GH_PROXY:+${URL_GH_PROXY%/}/}${latest_url}"
+    local resolved_url
+    resolved_url=$(
+        curl \
+            --silent \
+            --show-error \
+            --fail \
+            --insecure \
+            --location \
+            --retry 1 \
+            --output /dev/null \
+            --write-out '%{url_effective}' \
+            "$proxy_url"
+    ) || _error_quit "无法获取 mihomo 最新版本，请检查网络或加速链接"
+
+    resolved_url=${resolved_url%%\?*}
+    resolved_url=${resolved_url%%\#*}
+    local latest_tag=${resolved_url##*/}
+    [[ "$latest_tag" =~ ^v[0-9] ]] || _error_quit "无法解析 mihomo 最新版本：$resolved_url"
+    echo "$latest_tag"
+}
+
+# 根据架构构建 mihomo 下载地址
+_build_mihomo_download_url() {
+    local arch=$1
+    case "$arch" in
+    x86_64)
+        local level=$(_get_x86_64_optimization_level)
+        echo "https://github.com/MetaCubeX/mihomo/releases/download/${VERSION_MIHOMO}/mihomo-linux-amd64-${level}-${VERSION_MIHOMO}.gz"
+        ;;
+    *86*)
+        echo "https://github.com/MetaCubeX/mihomo/releases/download/${VERSION_MIHOMO}/mihomo-linux-386-${VERSION_MIHOMO}.gz"
+        ;;
+    armv*)
+        echo "https://github.com/MetaCubeX/mihomo/releases/download/${VERSION_MIHOMO}/mihomo-linux-armv7-${VERSION_MIHOMO}.gz"
+        ;;
+    aarch64)
+        echo "https://github.com/MetaCubeX/mihomo/releases/download/${VERSION_MIHOMO}/mihomo-linux-arm64-${VERSION_MIHOMO}.gz"
+        ;;
+    *)
+        return 1
+        ;;
+    esac
+}
+
 # 按 CPU 架构下载所需二进制资源
 _download_zip() {
     (($#)) || return 0
-    local url_clash url_mihomo url_yq url_subconverter
+    local url_mihomo url_yq url_subconverter
     local arch=$(uname -m)
+    VERSION_MIHOMO=$(_resolve_latest_mihomo_version)
     case "$arch" in
     x86_64)
-        local flags=$(grep -m1 '^flags' /proc/cpuinfo)
-        local level=v1
-        grep -qw sse4_2 <<<"$flags" && grep -qw popcnt <<<"$flags" && level=v2
-        grep -qw avx2 <<<"$flags" && grep -qw fma <<<"$flags" && level=v3
-        VERSION_MIHOMO=${level}-$VERSION_MIHOMO
-
-        url_clash=https://github.com/nelvko/clash-for-linux-install/releases/download/clash/clash-linux-amd64-2023.08.17.gz
-        url_mihomo=https://github.com/MetaCubeX/mihomo/releases/download/${VERSION_MIHOMO##*-}/mihomo-linux-amd64-${VERSION_MIHOMO}.gz
+        local level=$(_get_x86_64_optimization_level)
+        url_mihomo=$(_build_mihomo_download_url "$arch")
         url_yq=https://github.com/mikefarah/yq/releases/download/${VERSION_YQ}/yq_linux_amd64.tar.gz
         url_subconverter=https://github.com/tindy2013/subconverter/releases/download/${VERSION_SUBCONVERTER}/subconverter_linux64.tar.gz
         ;;
     *86*)
-        url_clash=https://github.com/nelvko/clash-for-linux-install/releases/download/clash/clash-linux-386-2023.08.17.gz
-        url_mihomo=https://github.com/MetaCubeX/mihomo/releases/download/${VERSION_MIHOMO##*-}/mihomo-linux-386-${VERSION_MIHOMO}.gz
+        url_mihomo=$(_build_mihomo_download_url "$arch")
         url_yq=https://github.com/mikefarah/yq/releases/download/${VERSION_YQ}/yq_linux_386.tar.gz
         url_subconverter=https://github.com/tindy2013/subconverter/releases/download/${VERSION_SUBCONVERTER}/subconverter_linux32.tar.gz
         ;;
     armv*)
-        url_clash=https://github.com/nelvko/clash-for-linux-install/releases/download/clash/clash-linux-armv5-2023.08.17.gz
-        url_mihomo=https://github.com/MetaCubeX/mihomo/releases/download/${VERSION_MIHOMO##*-}/mihomo-linux-armv7-${VERSION_MIHOMO}.gz
+        url_mihomo=$(_build_mihomo_download_url "$arch")
         url_yq=https://github.com/mikefarah/yq/releases/download/${VERSION_YQ}/yq_linux_arm.tar.gz
         url_subconverter=https://github.com/tindy2013/subconverter/releases/download/${VERSION_SUBCONVERTER}/subconverter_armv7.tar.gz
         ;;
     aarch64)
-        url_clash=https://github.com/nelvko/clash-for-linux-install/releases/download/clash/clash-linux-arm64-2023.08.17.gz
-        url_mihomo=https://github.com/MetaCubeX/mihomo/releases/download/${VERSION_MIHOMO##*-}/mihomo-linux-arm64-${VERSION_MIHOMO}.gz
+        url_mihomo=$(_build_mihomo_download_url "$arch")
         url_yq=https://github.com/mikefarah/yq/releases/download/${VERSION_YQ}/yq_linux_arm64.tar.gz
         url_subconverter=https://github.com/tindy2013/subconverter/releases/download/${VERSION_SUBCONVERTER}/subconverter_aarch64.tar.gz
         ;;
@@ -139,7 +156,6 @@ _download_zip() {
     esac
 
     local -A urls=(
-        [clash]="$url_clash"
         [mihomo]="$url_mihomo"
         [yq]="$url_yq"
         [subconverter]="$url_subconverter"
@@ -516,7 +532,6 @@ _set_envs() {
     _set_env INIT_TYPE "$INIT_TYPE"
     _set_env KERNEL_NAME "$KERNEL_NAME"
     _set_env CLASH_BASE_DIR "$CLASH_BASE_DIR"
-    _set_env VERSION_MIHOMO "$VERSION_MIHOMO"
 }
 
 # 生成随机字符串，用于初始化 Web 密钥等场景
