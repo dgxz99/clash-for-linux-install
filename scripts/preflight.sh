@@ -3,12 +3,16 @@
 # 安装前置逻辑
 # 负责环境校验、二进制下载、服务脚本生成以及 shell 集成
 
+THIS_SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+. "${THIS_SCRIPT_DIR}/lib/env.sh"
+. "${THIS_SCRIPT_DIR}/lib/common.sh"
+_load_env
+
 RESOURCES_BASE_DIR="$CLASH_RESOURCES_DIR"
 
 # 项目脚本目录
 SCRIPT_BASE_DIR='scripts'
 SCRIPT_INIT_DIR="${SCRIPT_BASE_DIR}/init"
-SCRIPT_INIT_PROVIDER_DIR="${SCRIPT_INIT_DIR}/providers"
 SCRIPT_CMD_DIR="${SCRIPT_BASE_DIR}/cmd"
 SCRIPT_CMD_FISH="${SCRIPT_CMD_DIR}/clashctl.fish"
 
@@ -351,66 +355,91 @@ _unzip_zip() {
 }
 
 # shellcheck disable=SC2206
-# 检测当前系统适合使用的服务管理方式
+# 检测当前 systemd 服务模式
 _detect_init() {
     [ -z "$INIT_TYPE" ] && INIT_TYPE=$(readlink /proc/1/exe)
-    grep -qsE "docker|kubepods|containerd|podman|lxc" /proc/1/cgroup && INIT_TYPE='nohup'
+    [[ "$INIT_TYPE" == *systemd ]] || _error_quit "当前项目仅支持 systemd / systemd --user"
 
-    _is_root || {
-        FILE_LOG="${CLASH_RESOURCES_DIR}/${KERNEL_NAME}.log"
-        FILE_PID="${CLASH_RESOURCES_DIR}/${KERNEL_NAME}.pid"
-        _has_systemd_user && INIT_TYPE='systemd' || INIT_TYPE='nohup'
-    }
-
-    service_log=(less '<' $FILE_LOG)
-    service_follow_log=(tail -f -n 0 $FILE_LOG)
     service_watch_proxy=(clashon)
     _is_regular_sudo && {
         service_watch_proxy=(_failcat "'未检测到代理变量，可执行 clashon 开启代理环境'")
         _SUDO=sudo
     }
 
-    case "${INIT_TYPE}" in
-    *systemd)
-        . "${SCRIPT_INIT_PROVIDER_DIR}/systemd.sh"
-        if _is_root || _is_regular_sudo; then
-            service_log=($_SUDO journalctl -u "$KERNEL_NAME")
-        else
-            service_log=(journalctl --user -u "$KERNEL_NAME")
-        fi
+    if _is_root || _is_regular_sudo; then
+        service_log=($_SUDO journalctl -u "$KERNEL_NAME")
         service_follow_log=("${service_log[@]}" -q -f -n 0)
-        _init_provider_systemd
-        ;;
-    *init)
-        . "${SCRIPT_INIT_PROVIDER_DIR}/sysvinit.sh"
-        _init_provider_sysvinit
-        ;;
-    *busybox)
-        command -v openrc-init >&/dev/null && {
-            . "${SCRIPT_INIT_PROVIDER_DIR}/openrc.sh"
-            _init_provider_openrc
-        }
-        ;;
-    *openrc*)
-        . "${SCRIPT_INIT_PROVIDER_DIR}/openrc.sh"
-        _init_provider_openrc
-        ;;
-    *runit)
-        . "${SCRIPT_INIT_PROVIDER_DIR}/runit.sh"
-        _init_provider_runit
-        ;;
-    nohup | *)
-        INIT_TYPE='nohup'
-        . "${SCRIPT_INIT_PROVIDER_DIR}/nohup.sh"
-        _init_provider_nohup
-        ;;
-    esac
+        _init_systemd_service
+        ((${#service_sudo_start[@]})) || service_sudo_start=("${service_start[@]}")
+        ((${#service_sudo_stop[@]})) || service_sudo_stop=("${service_stop[@]}")
+        ((${#service_sudo_status[@]})) || service_sudo_status=("${service_status[@]}")
+        ((${#service_sudo_is_active[@]})) || service_sudo_is_active=("${service_is_active[@]}")
+        ((${#service_sudo_log[@]})) || service_sudo_log=("${service_log[@]}")
+        INIT_TYPE='systemd'
+        return 0
+    fi
+
+    FILE_LOG="${CLASH_RESOURCES_DIR}/${KERNEL_NAME}.log"
+    FILE_PID="${CLASH_RESOURCES_DIR}/${KERNEL_NAME}.pid"
+    _has_systemd_user || _error_quit "未检测到可用的 systemd --user 环境"
+    service_log=(journalctl --user -u "$KERNEL_NAME")
+    service_follow_log=("${service_log[@]}" -q -f -n 0)
+    _init_systemd_service
     ((${#service_sudo_start[@]})) || service_sudo_start=("${service_start[@]}")
     ((${#service_sudo_stop[@]})) || service_sudo_stop=("${service_stop[@]}")
     ((${#service_sudo_status[@]})) || service_sudo_status=("${service_status[@]}")
     ((${#service_sudo_is_active[@]})) || service_sudo_is_active=("${service_is_active[@]}")
     ((${#service_sudo_log[@]})) || service_sudo_log=("${service_log[@]}")
-    INIT_TYPE=$(basename "$INIT_TYPE")
+    INIT_TYPE='systemd-user'
+}
+
+# systemd 服务参数
+_init_systemd_service() {
+    service_src="${SCRIPT_INIT_DIR}/systemd.sh"
+    service_mode=0644
+
+    if _is_root || _is_regular_sudo; then
+        service_target="/etc/systemd/system/${KERNEL_NAME}.service"
+        service_reload=($_SUDO systemctl daemon-reload)
+
+        service_enable=($_SUDO systemctl enable "$KERNEL_NAME")
+        service_disable=($_SUDO systemctl disable "$KERNEL_NAME")
+
+        service_start=($_SUDO systemctl start "$KERNEL_NAME")
+        service_stop=($_SUDO systemctl stop "$KERNEL_NAME")
+        service_restart=($_SUDO systemctl restart "$KERNEL_NAME")
+        service_status=($_SUDO systemctl status "$KERNEL_NAME")
+        service_is_active=($_SUDO systemctl is-active "$KERNEL_NAME")
+        service_sudo_start=("${service_start[@]}")
+        service_sudo_stop=($_SUDO systemctl stop "$KERNEL_NAME")
+        service_sudo_status=("${service_status[@]}")
+        service_sudo_is_active=("${service_is_active[@]}")
+        service_sudo_log=("${service_log[@]}")
+        SYSTEMD_WANTED_BY='multi-user.target'
+        SYSTEMD_CAPABILITIES='CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SYS_TIME CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE'
+        return 0
+    fi
+
+    service_target="${HOME}/.config/systemd/user/${KERNEL_NAME}.service"
+    service_reload=(systemctl --user daemon-reload)
+
+    service_enable=(systemctl --user enable "$KERNEL_NAME")
+    service_disable=(systemctl --user disable "$KERNEL_NAME")
+
+    service_start=(systemctl --user start "$KERNEL_NAME")
+    service_stop=(systemctl --user stop "$KERNEL_NAME")
+    service_restart=(systemctl --user restart "$KERNEL_NAME")
+    service_status=(systemctl --user status "$KERNEL_NAME")
+    service_is_active=(systemctl --user is-active "$KERNEL_NAME")
+
+    service_sudo_start=(sudo sh -c '"nohup' "$BIN_KERNEL" -d "$CLASH_RESOURCES_DIR" -f "$CLASH_CONFIG_RUNTIME" '<' '/dev/null' '>' "$FILE_LOG" '2>\&1' '\&"')
+    service_sudo_stop=($(_build_root_process_cmd stop))
+    service_sudo_status=($(_build_root_process_cmd status))
+    service_sudo_is_active=($(_build_root_process_cmd is_active))
+    service_sudo_log=(sudo tail -n 200 "$FILE_LOG")
+
+    SYSTEMD_WANTED_BY='default.target'
+    SYSTEMD_CAPABILITIES=''
 }
 
 # 为 systemd --user 场景补齐运行环境变量
@@ -487,7 +516,7 @@ _install_service() {
         -e "s#placeholder_sudo_log#${service_sudo_log[*]}#g" \
         -e "s#placeholder_follow_log#${service_follow_log[*]}#g" \
         -e "s#placeholder_watch_proxy#${service_watch_proxy[*]}#g" \
-        "$CLASH_CMD_DIR/clashctl.sh" "$CLASH_CMD_DIR/common.sh"
+        "$CLASH_CMD_DIR/clashctl.sh"
 
     "${service_enable[@]}" >&/dev/null && _okcat '🚀' '已设置开机自启'
     ((${#service_reload[@]})) && "${service_reload[@]}"
@@ -559,16 +588,6 @@ _set_envs() {
 # 生成随机字符串，用于初始化 Web 密钥等场景
 _get_random_val() {
     cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 6
-}
-
-# 判断是否处于 sudo 普通用户场景
-_is_regular_sudo() {
-    _is_root && [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != 'root' ]
-}
-
-# 判断当前是否为 root
-_is_root() {
-    [ "$(id -u)" -eq 0 ]
 }
 
 # 退出安装流程，必要时先执行收尾命令

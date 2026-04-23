@@ -4,7 +4,16 @@
 # 对外提供代理控制、Tun、订阅、日志和升级等操作入口
 
 THIS_SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE:-${(%):-%N}}")")
-. "$THIS_SCRIPT_DIR/common.sh"
+. "${THIS_SCRIPT_DIR}/../lib/env.sh"
+. "${THIS_SCRIPT_DIR}/../lib/common.sh"
+. "${THIS_SCRIPT_DIR}/../runtime/config.sh"
+. "${THIS_SCRIPT_DIR}/../runtime/subscription.sh"
+
+_bootstrap_runtime() {
+    [ "${_CLASH_RUNTIME_READY:-0}" = 1 ] && return 0
+    _load_env
+    _CLASH_RUNTIME_READY=1
+}
 
 # 根据运行时配置导出系统代理变量
 _set_system_proxy() {
@@ -45,38 +54,9 @@ _unset_system_proxy() {
     unset NO_PROXY
 }
 
-# 检测代理端口冲突并在未运行时自动改写到可用端口
-_detect_proxy_port() {
-    local mixed_port=$("$BIN_YQ" '.mixed-port // ""' "$CLASH_CONFIG_RUNTIME")
-    local http_port=$("$BIN_YQ" '.port // ""' "$CLASH_CONFIG_RUNTIME")
-    local socks_port=$("$BIN_YQ" '.socks-port // ""' "$CLASH_CONFIG_RUNTIME")
-    [ -z "$mixed_port" ] && [ -z "$http_port" ] && [ -z "$socks_port" ] && mixed_port=7890
-
-    local newPort count=0
-    local port_list=(
-        "mixed_port|mixed-port"
-        "http_port|port"
-        "socks_port|socks-port"
-    )
-    clashstatus >&/dev/null && local isActive='true'
-    for entry in "${port_list[@]}"; do
-        local var_name="${entry%|*}"
-        local yaml_key="${entry#*|}"
-
-        eval "local var_val=\${$var_name}"
-
-        [ -n "$var_val" ] && _is_port_used "$var_val" && [ "$isActive" != "true" ] && {
-            newPort=$(_get_random_port)
-            ((count++))
-            _failcat '🎯' "端口冲突：[$yaml_key] $var_val 🎲 随机分配 $newPort"
-            "$BIN_YQ" -i ".${yaml_key} = $newPort" "$CLASH_CONFIG_MIXIN"
-        }
-    done
-    ((count)) && _merge_config
-}
-
 # 启动代理环境
 function clashon() {
+    _bootstrap_runtime
     _detect_proxy_port
     clashstatus >&/dev/null || placeholder_start
     clashstatus >&/dev/null || {
@@ -89,6 +69,7 @@ function clashon() {
 
 # 在交互 shell 首次加载时按需自动开启代理
 watch_proxy() {
+    _bootstrap_runtime
     [ -z "$http_proxy" ] && {
         # [[ "$0" == -* ]] && { # 登录式shell
         [[ $- == *i* ]] && { # 交互式shell
@@ -99,6 +80,7 @@ watch_proxy() {
 
 # 关闭代理环境
 function clashoff() {
+    _bootstrap_runtime
     clashstatus >&/dev/null && {
         placeholder_stop >/dev/null
         clashstatus >&/dev/null && _tunstatus >&/dev/null && {
@@ -116,12 +98,14 @@ function clashoff() {
 
 # 重启代理环境
 clashrestart() {
+    _bootstrap_runtime
     clashoff >/dev/null
     clashon
 }
 
 # 查看或切换系统代理状态
 function clashproxy() {
+    _bootstrap_runtime
     case "$1" in
     -h | --help)
         cat <<EOF
@@ -169,6 +153,7 @@ $(env | grep -i 'proxy=')"
 
 # 查看内核运行状态，兼容普通模式与 Tun 模式
 function clashstatus() {
+    _bootstrap_runtime
     placeholder_is_active >&/dev/null && {
         placeholder_status "$@"
         return 0
@@ -183,6 +168,7 @@ function clashstatus() {
 
 # 查看运行日志
 function clashlog() {
+    _bootstrap_runtime
     placeholder_is_active >&/dev/null || {
         _tunstatus >&/dev/null && {
             placeholder_sudo_log "$@"
@@ -194,6 +180,7 @@ function clashlog() {
 
 # 输出 Web 控制台访问地址
 function clashui() {
+    _bootstrap_runtime
     _detect_ext_addr
     clashstatus >&/dev/null || clashon >/dev/null
     local query_url='api64.ipify.org' # ifconfig.me
@@ -216,90 +203,6 @@ function clashui() {
     printf "\n"
 }
 
-# 将基础配置与 mixin 深度合并为运行时配置
-_merge_config() {
-    cat "$CLASH_CONFIG_RUNTIME" >"$CLASH_CONFIG_TEMP" 2>/dev/null
-    # shellcheck disable=SC2016
-    "$BIN_YQ" eval-all '
-      ########################################
-      #              Load Files              #
-      ########################################
-      select(fileIndex==0) as $config |
-      select(fileIndex==1) as $mixin |
-      
-      ########################################
-      #              Deep Merge              #
-      ########################################
-      $mixin |= del(._custom) |
-      (($config // {}) * $mixin) as $runtime |
-      $runtime |
-      
-      ########################################
-      #               Rules                  #
-      ########################################
-      .rules = (
-        ($mixin.rules.prefix // []) +
-        ($config.rules // []) +
-        ($mixin.rules.suffix // [])
-      ) |
-      
-      ########################################
-      #                Proxies               #
-      ########################################
-      .proxies = (
-        ($mixin.proxies.prefix // []) +
-        (
-          ($config.proxies // []) as $configList |
-          ($mixin.proxies.override // []) as $overrideList |
-          $configList | map(
-            . as $configItem |
-            (
-              $overrideList[] | select(.name == $configItem.name)
-            ) // $configItem
-          )
-        ) +
-        ($mixin.proxies.suffix // [])
-      ) |
-      
-      ########################################
-      #             ProxyGroups              #
-      ########################################
-      .proxy-groups = (
-        ($mixin.proxy-groups.prefix // []) +
-        (
-          ($config.proxy-groups // []) as $configList |
-          ($mixin.proxy-groups.override // []) as $overrideList |
-          $configList | map(
-            . as $configItem |
-            (
-              $overrideList[] | select(.name == $configItem.name)
-            ) // $configItem
-          )
-        ) +
-        ($mixin.proxy-groups.suffix // [])
-      ) |
-
-      ########################################
-      #         ProxyGroups Inject           #
-      # 把 inject 表里的 proxy 名追加到对应   #
-      # 已有 group 的 .proxies 列表（自动去重）#
-      # 用途：把自定义 / 链式代理无侵入地     #
-      # 插入到订阅自带的节点组里，避免        #
-      # override 整组的麻烦                  #
-      ########################################
-      ($mixin.proxy-groups.inject // {}) as $inj |
-      .proxy-groups[] |= (
-        . as $g |
-        ($inj | .[$g.name] // []) as $extra |
-        .proxies = (.proxies + $extra | unique)
-      )
-    ' "$CLASH_CONFIG_BASE" "$CLASH_CONFIG_MIXIN" >"$CLASH_CONFIG_RUNTIME"
-    _valid_config "$CLASH_CONFIG_RUNTIME" || {
-        cat "$CLASH_CONFIG_TEMP" >"$CLASH_CONFIG_RUNTIME"
-        _error_quit "验证失败：请检查 Mixin 配置"
-    }
-}
-
 # 合并配置后重启内核使其生效
 _merge_config_restart() {
     local tun_active=0
@@ -317,13 +220,9 @@ _merge_config_restart() {
     sleep 0.1
 }
 
-# 读取当前 Web 控制台密钥
-_get_secret() {
-    "$BIN_YQ" '.secret // ""' "$CLASH_CONFIG_RUNTIME"
-}
-
 # 查看或修改 Web 控制台密钥
 function clashsecret() {
+    _bootstrap_runtime
     case "$1" in
     -h | --help)
         cat <<EOF
@@ -473,6 +372,7 @@ _tunon() {
 
 # Tun 子命令入口
 function clashtun() {
+    _bootstrap_runtime
     case "$1" in
     -h | --help)
         cat <<EOF
@@ -503,6 +403,7 @@ EOF
 
 # 查看或编辑 mixin 配置
 function clashmixin() {
+    _bootstrap_runtime
     case "$1" in
     -h | --help)
         cat <<EOF
@@ -541,6 +442,7 @@ EOF
 
 # 触发内核自升级
 function clashupgrade() {
+    _bootstrap_runtime
     for arg in "$@"; do
         case $arg in
         -h | --help)
@@ -603,6 +505,7 @@ EOF
 
 # 订阅管理总入口
 function clashsub() {
+    _bootstrap_runtime
     case "$1" in
     add)
         shift
@@ -800,6 +703,7 @@ _sub_log() {
 
 # clashctl 顶层命令分发
 function clashctl() {
+    _bootstrap_runtime
     case "$1" in
     on)
         shift
@@ -854,6 +758,7 @@ function clashctl() {
 
 # 帮助信息输出
 clashhelp() {
+    _bootstrap_runtime
     cat <<EOF
     
 Usage: 
