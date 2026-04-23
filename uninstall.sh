@@ -3,9 +3,14 @@
 # 卸载入口脚本
 # 负责关闭服务、移除 shell 注入、清理定时任务和安装目录
 
-. .env
+. scripts/lib/env.sh
+. scripts/lib/common.sh
+. scripts/install/validate.sh
+. scripts/install/systemd.sh
+. scripts/install/shell.sh
+_load_env
+_init_install_context
 . "$CLASH_BASE_DIR/scripts/cmd/clashctl.sh" 2>/dev/null
-. scripts/preflight.sh
 
 # Tun 以 root 方式运行时，普通用户不能直接卸载
 pgrep -f "$BIN_KERNEL" -u 0 >/dev/null && ! _is_root && _error_quit "请先关闭 Tun 模式"
