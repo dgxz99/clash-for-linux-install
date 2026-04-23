@@ -130,19 +130,6 @@ _get_local_ip() {
     echo "$local_ip"
 }
 
-_set_env() {
-    local key=$1
-    local value=$2
-    local env_path="${CLASH_BASE_DIR}/.env"
-
-    grep -qE "^${key}=" "$env_path" && {
-        value=${value//&/\\&}
-        sed -i "s|^${key}=.*|${key}=${value}|" "$env_path"
-        return $?
-    }
-    echo "${key}=${value}" >>"$env_path"
-}
-
 _is_root() {
     [ "$(id -u)" -eq 0 ]
 }
