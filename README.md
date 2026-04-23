@@ -13,9 +13,9 @@
 - 支持一键安装 `mihomo` 代理内核。
 - 兼容 `root` 与普通用户环境。
 - 普通用户在 `systemd` 环境下支持使用 `systemd --user` 方式自启动。
-- 适配主流 `Linux` 发行版，并兼容 `AutoDL` 等容器化环境。
+- 当前个人版本仅保留 `systemd` / `systemd --user` 安装方式。
 - 自动检测端口占用情况，在冲突时随机分配可用端口。
-- 自动识别系统架构与初始化系统，下载匹配的 `mihomo` 最新 release 与依赖，并生成对应的服务管理配置。
+- 自动识别系统架构与 `systemd` 运行模式，下载匹配的 `mihomo` 最新 release 与依赖，并生成对应的服务管理配置。
 - 在需要时调用 [subconverter](https://github.com/tindy2013/subconverter) 进行本地订阅转换。
 
 ## 🚀 一键安装
@@ -31,7 +31,7 @@ git clone --branch master --depth 1 https://gh-proxy.org/https://github.com/dgxz
 - 上述命令使用了[加速前缀](https://gh-proxy.org/)，如失效可更换其他[可用链接](https://ghproxy.link/)。
 - 可通过 `.env` 文件或脚本参数自定义安装选项。
 - 默认安装路径为 `~/.local/share/clashctl`。
-- 普通用户在 `systemd` 环境下会优先安装为 `systemd --user` 服务；若当前环境不可用，则回退为 `nohup` 方式运行。
+- 普通用户需要可用的 `systemd --user` 环境；当前个人版本不再提供 `nohup` 回退。
 - 在仅通过 `SSH` 使用服务器的场景下，若未启用 `linger`，退出该用户最后一个登录会话后，`systemd --user` 服务可能会被自动停止。
 - 没有订阅？[click me](https://次元.net/auth/register?code=oUbI)
 
