@@ -1,6 +1,6 @@
 [Unit]
 # systemd 服务模板
-# 安装时会由 preflight.sh 替换 placeholder 为实际值
+# 安装时会替换 placeholder 为实际值
 Description=placeholder_kernel_desc
 After=network.target NetworkManager.service systemd-networkd.service iwd.service
 

@@ -296,5 +296,5 @@ _unzip_zip() {
     /bin/cp "$BIN_SUBCONVERTER_DIR/pref.example.yml" "$BIN_SUBCONVERTER_CONFIG"
 
     unzip -oqq "$ZIP_UI" -d "$temp_ui_dir" 2>/dev/null || tar -xf "$ZIP_UI" -C "$temp_ui_dir"
-    /bin/cp -rf "${temp_ui_dir}/." "$RESOURCES_BASE_DIR"
+    /bin/cp -rf "${temp_ui_dir}/." "$CLASH_RESOURCES_DIR"
 }

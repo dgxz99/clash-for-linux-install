@@ -24,7 +24,8 @@ _detect_rc() {
 # 注入 clashctl 命令到 bash、zsh、fish
 _apply_rc() {
     _detect_rc
-    local source_clashctl=". $CLASH_CMD_DIR/clashctl.sh"
+    local clash_cmd_dir="${CLASH_BASE_DIR}/scripts/cmd"
+    local source_clashctl=". ${clash_cmd_dir}/clashctl.sh"
     # shellcheck disable=SC2086
     tee -a "$SHELL_RC_BASH" $SHELL_RC_ZSH >/dev/null <<EOF
 
@@ -36,9 +37,12 @@ $source_clashctl
 $end_flag
 EOF
     [ -n "$SHELL_RC_FISH" ] && {
+        local project_root fish_template
+        project_root=$(_get_project_root)
+        fish_template="${project_root}/scripts/cmd/clashctl.fish"
         mkdir -p "$(dirname "$SHELL_RC_FISH")"
-        /usr/bin/install "$SCRIPT_CMD_FISH" "$SHELL_RC_FISH"
-        sed -i "s#placeholder_clashctl_script#${CLASH_CMD_DIR}/clashctl.sh#g" "$SHELL_RC_FISH"
+        /usr/bin/install "$fish_template" "$SHELL_RC_FISH"
+        sed -i "s#placeholder_clashctl_script#${clash_cmd_dir}/clashctl.sh#g" "$SHELL_RC_FISH"
     }
     $source_clashctl
 }

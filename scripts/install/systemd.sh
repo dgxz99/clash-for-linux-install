@@ -44,8 +44,13 @@ _detect_init() {
 
 # systemd 服务参数
 _init_systemd_service() {
-    service_src="${SCRIPT_INIT_DIR}/systemd.sh"
+    local project_root service_template
+    project_root=$(_get_project_root)
+    service_template="${project_root}/scripts/init/systemd.sh"
+    service_src="$service_template"
     service_mode=0644
+    FILE_LOG="/var/log/${KERNEL_NAME}.log"
+    FILE_PID="/run/${KERNEL_NAME}.pid"
 
     if _is_root || _is_regular_sudo; then
         service_target="/etc/systemd/system/${KERNEL_NAME}.service"
@@ -127,6 +132,7 @@ _has_systemd_user() {
 # 将模板渲染成实际服务文件，并回填到命令脚本占位符
 _install_service() {
     local kernel_desc="$KERNEL_NAME Daemon, A[nother] Clash Kernel."
+    local clash_cmd_dir="${CLASH_BASE_DIR}/scripts/cmd"
 
     local cmd_path="${BIN_KERNEL}"
     local cmd_arg="-d ${CLASH_RESOURCES_DIR} -f ${CLASH_CONFIG_RUNTIME}"
@@ -165,7 +171,7 @@ _install_service() {
         -e "s#placeholder_sudo_log#${service_sudo_log[*]}#g" \
         -e "s#placeholder_follow_log#${service_follow_log[*]}#g" \
         -e "s#placeholder_watch_proxy#${service_watch_proxy[*]}#g" \
-        "$CLASH_CMD_DIR/clashctl.sh"
+        "${clash_cmd_dir}/clashctl.sh"
 
     "${service_enable[@]}" >&/dev/null && _okcat '🚀' '已设置开机自启'
     ((${#service_reload[@]})) && "${service_reload[@]}"

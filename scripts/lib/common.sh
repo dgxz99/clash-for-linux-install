@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # 通用工具函数
-# 负责日志、进程/端口、shell 检测以及基础系统判断
+# 负责日志、进程/端口以及基础系统判断
 
 _color_log() {
     local color=$1
@@ -32,58 +32,6 @@ _failcat() {
     [ $# -gt 1 ] && emoji=$1 && shift
     _color_log "$color" "${emoji} $1" >&2
     return 1
-}
-
-_is_interactive_shell_path() {
-    local shell_name
-    shell_name=$(basename "$1")
-    case "$shell_name" in
-    bash | zsh | fish | sh | dash | ash | ksh | mksh)
-        return 0
-        ;;
-    esac
-    return 1
-}
-
-_get_process_exec_path() {
-    readlink -f "/proc/$1/exe" 2>/dev/null
-}
-
-_get_process_ppid() {
-    awk '/^PPid:/ {print $2}' "/proc/$1/status" 2>/dev/null
-}
-
-_find_parent_interactive_shell() {
-    local pid=$1
-    local shell_path
-    while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null; do
-        shell_path=$(_get_process_exec_path "$pid")
-        [ -n "$shell_path" ] && _is_interactive_shell_path "$shell_path" && {
-            echo "$shell_path"
-            return 0
-        }
-        pid=$(_get_process_ppid "$pid")
-    done
-    return 1
-}
-
-_get_parent_interactive_shell() {
-    _find_parent_interactive_shell "$PPID"
-}
-
-_get_interactive_shell() {
-    local shell_path="${CLASH_SHELL:-}"
-    [ -n "$shell_path" ] && {
-        echo "$shell_path"
-        return 0
-    }
-
-    shell_path=$(_get_parent_interactive_shell)
-    [ -z "$shell_path" ] && shell_path="$SHELL"
-    [ -z "$shell_path" ] && [ -n "$USER" ] &&
-        shell_path=$(awk -F: -v user="$USER" '$1==user{print $7}' /etc/passwd)
-    [ -n "$shell_path" ] || shell_path=/bin/sh
-    echo "$shell_path"
 }
 
 _is_sourced_context() {
