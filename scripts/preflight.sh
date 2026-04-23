@@ -8,6 +8,7 @@ RESOURCES_BASE_DIR="$CLASH_RESOURCES_DIR"
 # 项目脚本目录
 SCRIPT_BASE_DIR='scripts'
 SCRIPT_INIT_DIR="${SCRIPT_BASE_DIR}/init"
+SCRIPT_INIT_PROVIDER_DIR="${SCRIPT_INIT_DIR}/providers"
 SCRIPT_CMD_DIR="${SCRIPT_BASE_DIR}/cmd"
 SCRIPT_CMD_FISH="${SCRIPT_CMD_DIR}/clashctl.fish"
 
@@ -371,29 +372,37 @@ _detect_init() {
 
     case "${INIT_TYPE}" in
     *systemd)
+        . "${SCRIPT_INIT_PROVIDER_DIR}/systemd.sh"
         if _is_root || _is_regular_sudo; then
             service_log=($_SUDO journalctl -u "$KERNEL_NAME")
         else
             service_log=(journalctl --user -u "$KERNEL_NAME")
         fi
         service_follow_log=("${service_log[@]}" -q -f -n 0)
-        _systemd
+        _init_provider_systemd
         ;;
     *init)
-        _sysvinit
+        . "${SCRIPT_INIT_PROVIDER_DIR}/sysvinit.sh"
+        _init_provider_sysvinit
         ;;
     *busybox)
-        command -v openrc-init >&/dev/null && _openrc
+        command -v openrc-init >&/dev/null && {
+            . "${SCRIPT_INIT_PROVIDER_DIR}/openrc.sh"
+            _init_provider_openrc
+        }
         ;;
     *openrc*)
-        _openrc
+        . "${SCRIPT_INIT_PROVIDER_DIR}/openrc.sh"
+        _init_provider_openrc
         ;;
     *runit)
-        _runit
+        . "${SCRIPT_INIT_PROVIDER_DIR}/runit.sh"
+        _init_provider_runit
         ;;
     nohup | *)
         INIT_TYPE='nohup'
-        _nohup
+        . "${SCRIPT_INIT_PROVIDER_DIR}/nohup.sh"
+        _init_provider_nohup
         ;;
     esac
     ((${#service_sudo_start[@]})) || service_sudo_start=("${service_start[@]}")
@@ -435,136 +444,6 @@ _has_systemd_user() {
     _prepare_systemd_user_env
     [ -n "$XDG_RUNTIME_DIR" ] || return 1
     systemctl --user show-environment >/dev/null 2>&1
-}
-
-# OpenRC 服务模板参数
-_openrc() {
-    service_src="${SCRIPT_INIT_DIR}/OpenRC.sh"
-    service_target="/etc/init.d/$KERNEL_NAME"
-    service_mode=0755
-
-    service_enable=(rc-update add "$KERNEL_NAME" default)
-    service_disable=(rc-update del "$KERNEL_NAME" default)
-
-    service_start=(rc-service "$KERNEL_NAME" start)
-    service_stop=(rc-service "$KERNEL_NAME" stop)
-    service_restart=(rc-service "$KERNEL_NAME" restart)
-    service_status=(rc-service "$KERNEL_NAME" status)
-    service_is_active=(rc-service "$KERNEL_NAME" status)
-}
-
-# runit 服务模板参数
-_runit() {
-    service_src="${SCRIPT_INIT_DIR}/runit.sh"
-    service_target="/etc/sv/${KERNEL_NAME}/run"
-    service_mode=0755
-    service_del=(rm -rf "/etc/sv/${KERNEL_NAME:-mihomo}")
-
-    service_reload=(sleep 2)
-    service_enable=(ln -s "$(dirname "$service_target")" "/etc/runit/runsvdir/default/${KERNEL_NAME}")
-    service_disable=(rm -f "/etc/runit/runsvdir/current/${KERNEL_NAME}")
-
-    service_start=(sv up "$KERNEL_NAME")
-    service_stop=(sv down "$KERNEL_NAME")
-    service_restart=(sv restart "$KERNEL_NAME")
-    service_status=(sv status "$KERNEL_NAME")
-    service_is_active=(sv status "$KERNEL_NAME" \| grep -qs '^run')
-}
-
-# SysVinit 服务模板参数
-_sysvinit() {
-    service_src="${SCRIPT_INIT_DIR}/SysVinit.sh"
-    service_target="/etc/init.d/$KERNEL_NAME"
-    service_mode=0755
-
-    command -v chkconfig >&/dev/null && {
-        service_add=(chkconfig --add "$KERNEL_NAME")
-        service_del=(chkconfig --del "$KERNEL_NAME")
-
-        service_enable=(chkconfig "$KERNEL_NAME" on)
-        service_disable=(chkconfig "$KERNEL_NAME" off)
-    }
-    command -v update-rc.d >&/dev/null && {
-        service_add=(update-rc.d "$KERNEL_NAME" defaults)
-        service_del=(update-rc.d "$KERNEL_NAME" remove)
-
-        service_enable=(update-rc.d "$KERNEL_NAME" enable)
-        service_disable=(update-rc.d "$KERNEL_NAME" disable)
-    }
-
-    service_start=(service "$KERNEL_NAME" start)
-    service_stop=(service "$KERNEL_NAME" stop)
-    service_restart=(service "$KERNEL_NAME" restart)
-    service_status=(service "$KERNEL_NAME" status)
-    service_is_active=(service "$KERNEL_NAME" status)
-}
-# shellcheck disable=SC2206
-
-# systemd 服务模板参数
-_systemd() {
-    service_src="${SCRIPT_INIT_DIR}/systemd.sh"
-    service_mode=0644
-    if _is_root || _is_regular_sudo; then
-        service_target="/etc/systemd/system/${KERNEL_NAME}.service"
-        service_reload=($_SUDO systemctl daemon-reload)
-
-        service_enable=($_SUDO systemctl enable "$KERNEL_NAME")
-        service_disable=($_SUDO systemctl disable "$KERNEL_NAME")
-
-        service_start=($_SUDO systemctl start "$KERNEL_NAME")
-        service_stop=($_SUDO systemctl stop "$KERNEL_NAME")
-        service_restart=($_SUDO systemctl restart "$KERNEL_NAME")
-        service_status=($_SUDO systemctl status "$KERNEL_NAME")
-        service_is_active=($_SUDO systemctl is-active "$KERNEL_NAME")
-        service_sudo_start=("${service_start[@]}")
-        service_sudo_stop=($_SUDO systemctl stop "$KERNEL_NAME")
-        service_sudo_status=("${service_status[@]}")
-        service_sudo_is_active=("${service_is_active[@]}")
-        service_sudo_log=("${service_log[@]}")
-        SYSTEMD_WANTED_BY='multi-user.target'
-        SYSTEMD_CAPABILITIES='CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SYS_TIME CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE'
-        return 0
-    fi
-
-    service_target="${HOME}/.config/systemd/user/${KERNEL_NAME}.service"
-    service_reload=(systemctl --user daemon-reload)
-
-    service_enable=(systemctl --user enable "$KERNEL_NAME")
-    service_disable=(systemctl --user disable "$KERNEL_NAME")
-
-    service_start=(systemctl --user start "$KERNEL_NAME")
-    service_stop=(systemctl --user stop "$KERNEL_NAME")
-    service_restart=(systemctl --user restart "$KERNEL_NAME")
-    service_status=(systemctl --user status "$KERNEL_NAME")
-    service_is_active=(systemctl --user is-active "$KERNEL_NAME")
-
-    service_sudo_start=(sudo sh -c '"nohup' "$BIN_KERNEL" -d "$CLASH_RESOURCES_DIR" -f "$CLASH_CONFIG_RUNTIME" '<' '/dev/null' '>' "$FILE_LOG" '2>\&1' '\&"')
-    service_sudo_stop=($(_build_root_process_cmd stop))
-    service_sudo_status=($(_build_root_process_cmd status))
-    service_sudo_is_active=($(_build_root_process_cmd is_active))
-    service_sudo_log=(sudo tail -n 200 "$FILE_LOG")
-
-    INIT_TYPE='systemd-user'
-    SYSTEMD_WANTED_BY='default.target'
-    SYSTEMD_CAPABILITIES=''
-}
-
-# 无服务管理器场景下的 nohup 兜底方案
-_nohup() {
-    service_enable=(false)
-    service_disable=(false)
-
-    # 使用子 shell 启动，确保进程脱离终端
-    service_start=('(' nohup "$BIN_KERNEL" -d "$CLASH_RESOURCES_DIR" -f "$CLASH_CONFIG_RUNTIME" '>' "$FILE_LOG" '2>\&1' '\&' ')')
-    # sudo 启动：nohup 完全脱离终端，关闭所有标准流
-    service_sudo_start=(sudo sh -c '"nohup' "$BIN_KERNEL" -d "$CLASH_RESOURCES_DIR" -f "$CLASH_CONFIG_RUNTIME" '<' '/dev/null' '>' "$FILE_LOG" '2>\&1' '\&"')
-    service_sudo_stop=($(_build_root_process_cmd stop))
-    service_status=(pgrep -fa "$BIN_KERNEL")
-    service_is_active=(pgrep -fa "$BIN_KERNEL")
-    service_sudo_status=($(_build_root_process_cmd status))
-    service_sudo_is_active=($(_build_root_process_cmd is_active))
-    service_sudo_log=(sudo tail -n 200 "$FILE_LOG")
-    service_stop=(pkill -9 -f "$BIN_KERNEL")
 }
 
 # 将模板渲染成实际服务文件，并回填到命令脚本占位符
