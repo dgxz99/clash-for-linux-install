@@ -77,7 +77,6 @@ _detect_proxy_port() {
 
 # 启动代理环境
 function clashon() {
-    _sync_user_tun_state
     _detect_proxy_port
     clashstatus >&/dev/null || placeholder_start
     clashstatus >&/dev/null || {
@@ -174,7 +173,7 @@ function clashstatus() {
         placeholder_status "$@"
         return 0
     }
-    _tunstatus >&/dev/null && placeholder_sudo_is_active >&/dev/null && {
+    _tunstatus >&/dev/null && {
         placeholder_sudo_status "$@"
         return 0
     }
@@ -303,10 +302,14 @@ _merge_config() {
 
 # 合并配置后重启内核使其生效
 _merge_config_restart() {
+    local tun_active=0
+    _tunstatus >&/dev/null && tun_active=1
     _merge_config
     placeholder_stop >/dev/null
-    clashstatus >&/dev/null && _tunstatus >&/dev/null && {
-        _tunoff || _error_quit "请先关闭 Tun 模式"
+    ((tun_active)) && {
+        _sudo_restart
+        sleep 0.1
+        return 0
     }
     placeholder_stop >/dev/null
     sleep 0.1
@@ -368,23 +371,18 @@ _prepare_user_tun_runtime() {
     _merge_config
 }
 
-# 同步用户态 Tun 配置与实际运行状态
-_sync_user_tun_state() {
-    _is_user_tun_mode || return 0
-    placeholder_sudo_is_active >&/dev/null && [ -f "$CLASH_CONFIG_TUN_RUNTIME" ] && return 0
-    rm -f "$CLASH_CONFIG_TUN_RUNTIME"
-    "$BIN_YQ" -e '.tun.enable == true' "$CLASH_CONFIG_MIXIN" >&/dev/null || return 0
-    "$BIN_YQ" -i '.tun.enable = false' "$CLASH_CONFIG_MIXIN"
-    _merge_config
-}
-
 # 查询 Tun 状态
 _tunstatus() {
     _is_user_tun_mode && {
-        placeholder_sudo_is_active >&/dev/null && [ -f "$CLASH_CONFIG_TUN_RUNTIME" ] && {
+        [ -f "$CLASH_CONFIG_TUN_RUNTIME" ] || {
+            _failcat 'Tun 状态：关闭'
+            return 1
+        }
+        placeholder_sudo_is_active >&/dev/null && {
             _okcat 'Tun 状态：启用'
             return 0
         }
+        rm -f "$CLASH_CONFIG_TUN_RUNTIME"
         _failcat 'Tun 状态：关闭'
         return 1
     }
