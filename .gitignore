@@ -5,6 +5,7 @@ resources/zip/*
 !resources/zip/dist.zip
 resources/dist/
 test.sh
+tests/
 
 
 
