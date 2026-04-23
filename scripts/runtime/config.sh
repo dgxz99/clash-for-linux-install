@@ -3,10 +3,74 @@
 # 运行时配置能力
 # 负责配置校验、端口检测、配置合并和 Web 控制台相关能力
 
+_resources_dir() {
+    echo "${CLASH_BASE_DIR}/resources"
+}
+
+_config_base_path() {
+    echo "$(_resources_dir)/config.yaml"
+}
+
+_config_mixin_path() {
+    echo "$(_resources_dir)/mixin.yaml"
+}
+
+_config_runtime_path() {
+    echo "$(_resources_dir)/runtime.yaml"
+}
+
+_config_tun_runtime_path() {
+    echo "$(_resources_dir)/runtime.tun.yaml"
+}
+
+_config_temp_path() {
+    echo "$(_resources_dir)/temp.yaml"
+}
+
+_bin_dir() {
+    echo "${CLASH_BASE_DIR}/bin"
+}
+
+_kernel_bin() {
+    echo "$(_bin_dir)/${KERNEL_NAME}"
+}
+
+_yq_bin() {
+    echo "$(_bin_dir)/yq"
+}
+
+_subconverter_dir() {
+    echo "$(_bin_dir)/subconverter"
+}
+
+_subconverter_bin() {
+    echo "$(_subconverter_dir)/subconverter"
+}
+
+_subconverter_config_path() {
+    echo "$(_subconverter_dir)/pref.yml"
+}
+
+_subconverter_log_path() {
+    echo "$(_subconverter_dir)/latest.log"
+}
+
+_profiles_dir() {
+    echo "$(_resources_dir)/profiles"
+}
+
+_profiles_meta_path() {
+    echo "$(_resources_dir)/profiles.yaml"
+}
+
+_profiles_log_path() {
+    echo "$(_resources_dir)/profiles.log"
+}
+
 _get_bind_addr() {
     local allow_lan bind_addr
-    bind_addr=$("$BIN_YQ" '.bind-address // "*"' "$CLASH_CONFIG_RUNTIME")
-    allow_lan=$("$BIN_YQ" '.allow-lan // false' "$CLASH_CONFIG_RUNTIME")
+    bind_addr=$("$(_yq_bin)" '.bind-address // "*"' "$(_config_runtime_path)")
+    allow_lan=$("$(_yq_bin)" '.allow-lan // false' "$(_config_runtime_path)")
 
     case $allow_lan in
     true)
@@ -21,7 +85,7 @@ _get_bind_addr() {
 
 _detect_ext_addr() {
     local ext_addr
-    ext_addr=$("$BIN_YQ" '.external-controller // ""' "$CLASH_CONFIG_RUNTIME")
+    ext_addr=$("$(_yq_bin)" '.external-controller // ""' "$(_config_runtime_path)")
     local ext_ip=${ext_addr%%:*}
     EXT_IP=$ext_ip
     EXT_PORT=${ext_addr##*:}
@@ -31,7 +95,7 @@ _detect_ext_addr() {
         local new_port=$(_get_random_port)
         _failcat '🎯' "端口冲突：[external-controller] ${EXT_PORT} 🎲 随机分配 $new_port"
         EXT_PORT=$new_port
-        "$BIN_YQ" -i ".external-controller = \"$ext_ip:$new_port\"" "$CLASH_CONFIG_MIXIN"
+        "$(_yq_bin)" -i ".external-controller = \"$ext_ip:$new_port\"" "$(_config_mixin_path)"
         _merge_config
     }
 }
@@ -41,7 +105,7 @@ _valid_config() {
     [[ ! -e "$config" || "$(wc -l <"$config")" -lt 1 ]] && return 1
 
     local test_cmd test_log
-    test_cmd=("$BIN_KERNEL" -d "$(dirname "$config")" -f "$config" -t)
+    test_cmd=("$(_kernel_bin)" -d "$(dirname "$config")" -f "$config" -t)
     test_log=$("${test_cmd[@]}") || {
         "${test_cmd[@]}"
         grep -qs "unsupport proxy type" <<<"$test_log" && {
@@ -53,9 +117,9 @@ _valid_config() {
 
 _detect_proxy_port() {
     local mixed_port http_port socks_port
-    mixed_port=$("$BIN_YQ" '.mixed-port // ""' "$CLASH_CONFIG_RUNTIME")
-    http_port=$("$BIN_YQ" '.port // ""' "$CLASH_CONFIG_RUNTIME")
-    socks_port=$("$BIN_YQ" '.socks-port // ""' "$CLASH_CONFIG_RUNTIME")
+    mixed_port=$("$(_yq_bin)" '.mixed-port // ""' "$(_config_runtime_path)")
+    http_port=$("$(_yq_bin)" '.port // ""' "$(_config_runtime_path)")
+    socks_port=$("$(_yq_bin)" '.socks-port // ""' "$(_config_runtime_path)")
     [ -z "$mixed_port" ] && [ -z "$http_port" ] && [ -z "$socks_port" ] && mixed_port=7890
 
     local new_port count=0
@@ -75,16 +139,24 @@ _detect_proxy_port() {
             new_port=$(_get_random_port)
             ((count++))
             _failcat '🎯' "端口冲突：[$yaml_key] $var_val 🎲 随机分配 $new_port"
-            "$BIN_YQ" -i ".${yaml_key} = $new_port" "$CLASH_CONFIG_MIXIN"
+            "$(_yq_bin)" -i ".${yaml_key} = $new_port" "$(_config_mixin_path)"
         }
     done
     ((count)) && _merge_config
 }
 
 _merge_config() {
-    cat "$CLASH_CONFIG_RUNTIME" >"$CLASH_CONFIG_TEMP" 2>/dev/null
+    local config_runtime
+    local config_temp
+    local config_base
+    local config_mixin
+    config_runtime=$(_config_runtime_path)
+    config_temp=$(_config_temp_path)
+    config_base=$(_config_base_path)
+    config_mixin=$(_config_mixin_path)
+    cat "$config_runtime" >"$config_temp" 2>/dev/null
     # shellcheck disable=SC2016
-    "$BIN_YQ" eval-all '
+    "$(_yq_bin)" eval-all '
       select(fileIndex==0) as $config |
       select(fileIndex==1) as $mixin |
       $mixin |= del(._custom) |
@@ -129,13 +201,13 @@ _merge_config() {
         ($inj | .[$g.name] // []) as $extra |
         .proxies = (.proxies + $extra | unique)
       )
-    ' "$CLASH_CONFIG_BASE" "$CLASH_CONFIG_MIXIN" >"$CLASH_CONFIG_RUNTIME"
-    _valid_config "$CLASH_CONFIG_RUNTIME" || {
-        cat "$CLASH_CONFIG_TEMP" >"$CLASH_CONFIG_RUNTIME"
+    ' "$config_base" "$config_mixin" >"$config_runtime"
+    _valid_config "$config_runtime" || {
+        cat "$config_temp" >"$config_runtime"
         _error_quit "验证失败：请检查 Mixin 配置"
     }
 }
 
 _get_secret() {
-    "$BIN_YQ" '.secret // ""' "$CLASH_CONFIG_RUNTIME"
+    "$(_yq_bin)" '.secret // ""' "$(_config_runtime_path)"
 }

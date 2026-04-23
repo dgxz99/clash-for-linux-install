@@ -7,6 +7,7 @@ THIS_SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 . "${THIS_SCRIPT_DIR}/lib/env.sh"
 . "${THIS_SCRIPT_DIR}/lib/common.sh"
 _load_env
+_init_install_context
 
 RESOURCES_BASE_DIR="$CLASH_RESOURCES_DIR"
 

@@ -23,7 +23,9 @@ _load_env() {
     . "$env_path"
 
     KERNEL_NAME="${KERNEL_NAME:-mihomo}"
+}
 
+_init_install_context() {
     CLASH_RESOURCES_DIR="${CLASH_BASE_DIR}/resources"
     CLASH_CONFIG_BASE="${CLASH_RESOURCES_DIR}/config.yaml"
     CLASH_CONFIG_MIXIN="${CLASH_RESOURCES_DIR}/mixin.yaml"

@@ -17,11 +17,14 @@ _bootstrap_runtime() {
 
 # 根据运行时配置导出系统代理变量
 _set_system_proxy() {
-    local mixed_port=$("$BIN_YQ" '.mixed-port // ""' "$CLASH_CONFIG_RUNTIME")
-    local http_port=$("$BIN_YQ" '.port // ""' "$CLASH_CONFIG_RUNTIME")
-    local socks_port=$("$BIN_YQ" '.socks-port // ""' "$CLASH_CONFIG_RUNTIME")
+    local runtime_path yq_bin
+    runtime_path=$(_config_runtime_path)
+    yq_bin=$(_yq_bin)
+    local mixed_port=$("$yq_bin" '.mixed-port // ""' "$runtime_path")
+    local http_port=$("$yq_bin" '.port // ""' "$runtime_path")
+    local socks_port=$("$yq_bin" '.socks-port // ""' "$runtime_path")
 
-    local auth=$("$BIN_YQ" '.authentication[0] // ""' "$CLASH_CONFIG_RUNTIME")
+    local auth=$("$yq_bin" '.authentication[0] // ""' "$runtime_path")
     [ -n "$auth" ] && auth=$auth@
 
     local bind_addr=$(_get_bind_addr)
@@ -127,17 +130,17 @@ EOF
             _failcat "$KERNEL_NAME 未运行，请先执行 clashon"
             return 1
         }
-        "$BIN_YQ" -i '._custom.system-proxy.enable = true' "$CLASH_CONFIG_MIXIN"
+        "$(_yq_bin)" -i '._custom.system-proxy.enable = true' "$(_config_mixin_path)"
         _set_system_proxy
         _okcat '已开启系统代理'
         ;;
     off)
-        "$BIN_YQ" -i '._custom.system-proxy.enable = false' "$CLASH_CONFIG_MIXIN"
+        "$(_yq_bin)" -i '._custom.system-proxy.enable = false' "$(_config_mixin_path)"
         _unset_system_proxy
         _okcat '已关闭系统代理'
         ;;
     *)
-        local system_proxy_enable=$("$BIN_YQ" '._custom.system-proxy.enable' "$CLASH_CONFIG_MIXIN" 2>/dev/null)
+        local system_proxy_enable=$("$(_yq_bin)" '._custom.system-proxy.enable' "$(_config_mixin_path)" 2>/dev/null)
         case $system_proxy_enable in
         true)
             _okcat "系统代理：开启
@@ -243,7 +246,7 @@ EOF
         _okcat "当前密钥：$(_get_secret)"
         ;;
     1)
-        "$BIN_YQ" -i ".secret = \"$1\"" "$CLASH_CONFIG_MIXIN" || {
+        "$(_yq_bin)" -i ".secret = \"$1\"" "$(_config_mixin_path)" || {
             _failcat "密钥更新失败，请重新输入"
             return 1
         }
@@ -263,17 +266,24 @@ _is_user_tun_mode() {
 
 # 为 systemd-user 场景生成单独的 Tun 运行时配置
 _prepare_user_tun_runtime() {
-    "$BIN_YQ" -i '.tun.enable = true' "$CLASH_CONFIG_MIXIN"
+    local yq_bin mixin_path runtime_path tun_runtime_path
+    yq_bin=$(_yq_bin)
+    mixin_path=$(_config_mixin_path)
+    runtime_path=$(_config_runtime_path)
+    tun_runtime_path=$(_config_tun_runtime_path)
+    "$yq_bin" -i '.tun.enable = true' "$mixin_path"
     _merge_config
-    cat "$CLASH_CONFIG_RUNTIME" >"$CLASH_CONFIG_TUN_RUNTIME"
-    "$BIN_YQ" -i '.tun.enable = false' "$CLASH_CONFIG_MIXIN"
+    cat "$runtime_path" >"$tun_runtime_path"
+    "$yq_bin" -i '.tun.enable = false' "$mixin_path"
     _merge_config
 }
 
 # 查询 Tun 状态
 _tunstatus() {
     _is_user_tun_mode && {
-        [ -f "$CLASH_CONFIG_TUN_RUNTIME" ] || {
+        local tun_runtime_path
+        tun_runtime_path=$(_config_tun_runtime_path)
+        [ -f "$tun_runtime_path" ] || {
             _failcat 'Tun 状态：关闭'
             return 1
         }
@@ -281,11 +291,11 @@ _tunstatus() {
             _okcat 'Tun 状态：启用'
             return 0
         }
-        rm -f "$CLASH_CONFIG_TUN_RUNTIME"
+        rm -f "$tun_runtime_path"
         _failcat 'Tun 状态：关闭'
         return 1
     }
-    local tun_status=$("$BIN_YQ" '.tun.enable' "${CLASH_CONFIG_RUNTIME}")
+    local tun_status=$("$(_yq_bin)" '.tun.enable' "$(_config_runtime_path)")
     case $tun_status in
     true)
         _okcat 'Tun 状态：启用'
@@ -303,13 +313,13 @@ _tunoff() {
     # 强制恢复终端输出处理
     stty opost 2>/dev/null
     _is_user_tun_mode && {
-        rm -f "$CLASH_CONFIG_TUN_RUNTIME"
-        "$BIN_YQ" -i '.tun.enable = false' "$CLASH_CONFIG_MIXIN"
+        rm -f "$(_config_tun_runtime_path)"
+        "$(_yq_bin)" -i '.tun.enable = false' "$(_config_mixin_path)"
         _merge_config
     }
     clashstatus >&/dev/null || {
         _is_user_tun_mode || {
-            "$BIN_YQ" -i '.tun.enable = false' "$CLASH_CONFIG_MIXIN"
+            "$(_yq_bin)" -i '.tun.enable = false' "$(_config_mixin_path)"
             _merge_config
         }
         clashon >/dev/null
@@ -323,9 +333,13 @@ _tunoff() {
 _sudo_restart() {
     placeholder_sudo_stop
     if _is_user_tun_mode; then
+        local resources_dir tun_runtime_path tun_log kernel_bin
+        resources_dir=$(_resources_dir)
+        tun_runtime_path=$(_config_tun_runtime_path)
+        kernel_bin=$(_kernel_bin)
         _prepare_user_tun_runtime
-        local tun_log="${CLASH_RESOURCES_DIR}/${KERNEL_NAME}.log"
-        sudo sh -c "nohup \"$BIN_KERNEL\" -d \"$CLASH_RESOURCES_DIR\" -f \"$CLASH_CONFIG_TUN_RUNTIME\" < /dev/null > \"$tun_log\" 2>&1 &"
+        tun_log="${resources_dir}/${KERNEL_NAME}.log"
+        sudo sh -c "nohup \"$kernel_bin\" -d \"$resources_dir\" -f \"$tun_runtime_path\" < /dev/null > \"$tun_log\" 2>&1 &"
     else
         placeholder_sudo_start
     fi
@@ -340,11 +354,15 @@ _tunon() {
     placeholder_stop >/dev/null 2>&1
     placeholder_sudo_stop >/dev/null 2>&1
     if _is_user_tun_mode; then
+        local resources_dir tun_runtime_path tun_log kernel_bin
+        resources_dir=$(_resources_dir)
+        tun_runtime_path=$(_config_tun_runtime_path)
+        kernel_bin=$(_kernel_bin)
         _prepare_user_tun_runtime
-        local tun_log="${CLASH_RESOURCES_DIR}/${KERNEL_NAME}.log"
-        sudo sh -c "nohup \"$BIN_KERNEL\" -d \"$CLASH_RESOURCES_DIR\" -f \"$CLASH_CONFIG_TUN_RUNTIME\" < /dev/null > \"$tun_log\" 2>&1 &"
+        tun_log="${resources_dir}/${KERNEL_NAME}.log"
+        sudo sh -c "nohup \"$kernel_bin\" -d \"$resources_dir\" -f \"$tun_runtime_path\" < /dev/null > \"$tun_log\" 2>&1 &"
     else
-        "$BIN_YQ" -i '.tun.enable = true' "$CLASH_CONFIG_MIXIN"
+        "$(_yq_bin)" -i '.tun.enable = true' "$(_config_mixin_path)"
         _merge_config
         placeholder_sudo_start
     fi
@@ -357,7 +375,7 @@ _tunon() {
     local ok_msg="Tun adapter listening at|TUN listening iface"
     clashlog | grep -E -m1 -qs "$fail_msg" && {
         [ "$KERNEL_NAME" = 'mihomo' ] && {
-            "$BIN_YQ" -i '.tun.auto-redirect = false' "$CLASH_CONFIG_MIXIN"
+            "$(_yq_bin)" -i '.tun.auto-redirect = false' "$(_config_mixin_path)"
             _merge_config
             _sudo_restart
         }
@@ -404,38 +422,42 @@ EOF
 # 查看或编辑 mixin 配置
 function clashmixin() {
     _bootstrap_runtime
+    local mixin_path config_base runtime_path
+    mixin_path=$(_config_mixin_path)
+    config_base=$(_config_base_path)
+    runtime_path=$(_config_runtime_path)
     case "$1" in
     -h | --help)
         cat <<EOF
 
-- 查看 Mixin 配置：$CLASH_CONFIG_MIXIN
+- 查看 Mixin 配置：$mixin_path
   clashmixin
 
 - 编辑 Mixin 配置
   clashmixin -e
 
-- 查看原始订阅配置：$CLASH_CONFIG_BASE
+- 查看原始订阅配置：$config_base
   clashmixin -c
 
-- 查看运行时配置：$CLASH_CONFIG_RUNTIME
+- 查看运行时配置：$runtime_path
   clashmixin -r
 
 EOF
         return 0
         ;;
     -e)
-        vim "$CLASH_CONFIG_MIXIN" && {
+        vim "$mixin_path" && {
             _merge_config_restart && _okcat "配置更新成功，已重启生效"
         }
         ;;
     -r)
-        less "$CLASH_CONFIG_RUNTIME"
+        less "$runtime_path"
         ;;
     -c)
-        less "$CLASH_CONFIG_BASE"
+        less "$config_base"
         ;;
     *)
-        less "$CLASH_CONFIG_MIXIN"
+        less "$mixin_path"
         ;;
     esac
 }
@@ -565,24 +587,30 @@ _sub_add() {
     }
     _get_url_by_id "$id" >/dev/null && _error_quit "该订阅链接已存在"
 
-    _download_config "$CLASH_CONFIG_TEMP" "$url"
-    _valid_config "$CLASH_CONFIG_TEMP" || _error_quit "订阅无效，请检查：
-    原始订阅：${CLASH_CONFIG_TEMP}.raw
-    转换订阅：$CLASH_CONFIG_TEMP
-    转换日志：$BIN_SUBCONVERTER_LOG"
+    local config_temp profiles_meta profile_dir yq_bin subconverter_log
+    config_temp=$(_config_temp_path)
+    profiles_meta=$(_profiles_meta_path)
+    profile_dir=$(_profiles_dir)
+    yq_bin=$(_yq_bin)
+    subconverter_log=$(_subconverter_log_path)
+    _download_config "$config_temp" "$url"
+    _valid_config "$config_temp" || _error_quit "订阅无效，请检查：
+    原始订阅：${config_temp}.raw
+    转换订阅：$config_temp
+    转换日志：$subconverter_log"
 
-    local id=$("$BIN_YQ" '.profiles // [] | (map(.id) | max) // 0 | . + 1' "$CLASH_PROFILES_META")
-    local profile_path="${CLASH_PROFILES_DIR}/${id}.yaml"
-    mv "$CLASH_CONFIG_TEMP" "$profile_path"
+    local id=$("$yq_bin" '.profiles // [] | (map(.id) | max) // 0 | . + 1' "$profiles_meta")
+    local profile_path="${profile_dir}/${id}.yaml"
+    mv "$config_temp" "$profile_path"
 
-    "$BIN_YQ" -i "
+    "$yq_bin" -i "
          .profiles = (.profiles // []) + 
          [{
            \"id\": $id,
            \"path\": \"$profile_path\",
            \"url\": \"$url\"
          }]
-    " "$CLASH_PROFILES_META"
+    " "$profiles_meta"
     _logging_sub "➕ 已添加订阅：[$id] $url"
     _okcat '🎉' "订阅已添加：[$id] $url"
 }
@@ -598,22 +626,22 @@ _sub_del() {
     local profile_path url
     profile_path=$(_get_path_by_id "$id") || _error_quit "订阅 id 不存在，请检查"
     url=$(_get_url_by_id "$id")
-    use=$("$BIN_YQ" '.use // ""' "$CLASH_PROFILES_META")
+    use=$("$(_yq_bin)" '.use // ""' "$(_profiles_meta_path)")
     [ "$use" = "$id" ] && _error_quit "删除失败：订阅 $id 正在使用中，请先切换订阅"
     /usr/bin/rm -f "$profile_path"
-    "$BIN_YQ" -i "del(.profiles[] | select(.id == \"$id\"))" "$CLASH_PROFILES_META"
+    "$(_yq_bin)" -i "del(.profiles[] | select(.id == \"$id\"))" "$(_profiles_meta_path)"
     _logging_sub "➖ 已删除订阅：[$id] $url"
     _okcat '🎉' "订阅已删除：[$id] $url"
 }
 
 # 列出订阅元数据
 _sub_list() {
-    "$BIN_YQ" "$CLASH_PROFILES_META"
+    "$(_yq_bin)" "$(_profiles_meta_path)"
 }
 
 # 切换当前使用的订阅
 _sub_use() {
-    "$BIN_YQ" -e '.profiles // [] | length == 0' "$CLASH_PROFILES_META" >&/dev/null &&
+    "$(_yq_bin)" -e '.profiles // [] | length == 0' "$(_profiles_meta_path)" >&/dev/null &&
         _error_quit "当前无可用订阅，请先添加订阅"
     local id=$1
     [ -z "$id" ] && {
@@ -625,21 +653,21 @@ _sub_use() {
     local profile_path url
     profile_path=$(_get_path_by_id "$id") || _error_quit "订阅 id 不存在，请检查"
     url=$(_get_url_by_id "$id")
-    cat "$profile_path" >"$CLASH_CONFIG_BASE"
+    cat "$profile_path" >"$(_config_base_path)"
     _merge_config_restart
-    "$BIN_YQ" -i ".use = $id" "$CLASH_PROFILES_META"
+    "$(_yq_bin)" -i ".use = $id" "$(_profiles_meta_path)"
     _logging_sub "🔥 订阅已切换为：[$id] $url"
     _okcat '🔥' '订阅已生效'
 }
 
 # 通过订阅 id 获取配置文件路径
 _get_path_by_id() {
-    "$BIN_YQ" -e ".profiles[] | select(.id == \"$1\") | .path" "$CLASH_PROFILES_META" 2>/dev/null
+    "$(_yq_bin)" -e ".profiles[] | select(.id == \"$1\") | .path" "$(_profiles_meta_path)" 2>/dev/null
 }
 
 # 通过订阅 id 获取原始订阅地址
 _get_url_by_id() {
-    "$BIN_YQ" -e ".profiles[] | select(.id == \"$1\") | .url" "$CLASH_PROFILES_META" 2>/dev/null
+    "$(_yq_bin)" -e ".profiles[] | select(.id == \"$1\") | .url" "$(_profiles_meta_path)" 2>/dev/null
 }
 
 # 更新订阅，可选启用定时更新和强制转换
@@ -665,40 +693,40 @@ _sub_update() {
         esac
     done
     local id=$1
-    [ -z "$id" ] && id=$("$BIN_YQ" '.use // 1' "$CLASH_PROFILES_META")
+    [ -z "$id" ] && id=$("$(_yq_bin)" '.use // 1' "$(_profiles_meta_path)")
     local url profile_path
     url=$(_get_url_by_id "$id") || _error_quit "订阅 id 不存在，请检查"
     profile_path=$(_get_path_by_id "$id")
     _okcat "✈️ " "更新订阅：[$id] $url"
 
     [ "$is_convert" = true ] && {
-        _download_convert_config "$CLASH_CONFIG_TEMP" "$url"
+        _download_convert_config "$(_config_temp_path)" "$url"
     }
     [ "$is_convert" != true ] && {
-        _download_config "$CLASH_CONFIG_TEMP" "$url"
+        _download_config "$(_config_temp_path)" "$url"
     }
-    _valid_config "$CLASH_CONFIG_TEMP" || {
+    _valid_config "$(_config_temp_path)" || {
         _logging_sub "❌ 订阅更新失败：[$id] $url"
         _error_quit "订阅无效：请检查：
-    原始订阅：${CLASH_CONFIG_TEMP}.raw
-    转换订阅：$CLASH_CONFIG_TEMP
-    转换日志：$BIN_SUBCONVERTER_LOG"
+    原始订阅：$(_config_temp_path).raw
+    转换订阅：$(_config_temp_path)
+    转换日志：$(_subconverter_log_path)"
     }
     _logging_sub "✅ 订阅更新成功：[$id] $url"
-    cat "$CLASH_CONFIG_TEMP" >"$profile_path"
-    use=$("$BIN_YQ" '.use // ""' "$CLASH_PROFILES_META")
+    cat "$(_config_temp_path)" >"$profile_path"
+    use=$("$(_yq_bin)" '.use // ""' "$(_profiles_meta_path)")
     [ "$use" = "$id" ] && clashsub use "$use" && return
     _okcat '订阅已更新'
 }
 
 # 写入订阅操作日志
 _logging_sub() {
-    echo "$(date +"%Y-%m-%d %H:%M:%S") $1" >>"${CLASH_PROFILES_LOG}"
+    echo "$(date +"%Y-%m-%d %H:%M:%S") $1" >>"$(_profiles_log_path)"
 }
 
 # 查看订阅操作日志
 _sub_log() {
-    tail <"${CLASH_PROFILES_LOG}" "$@"
+    tail <"$(_profiles_log_path)" "$@"
 }
 
 # clashctl 顶层命令分发
