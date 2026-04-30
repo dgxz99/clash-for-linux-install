@@ -58,6 +58,9 @@ _resolve_latest_release_tag() {
     local request_url="${URL_GH_API_PROXY:+${URL_GH_API_PROXY%/}/}${api_url}"
     local response
     local latest_tag
+    local curl_tls_args=()
+
+    [ "${CLASH_INSECURE_DOWNLOAD:-}" = 1 ] && curl_tls_args+=(--insecure)
 
     _okcat '⏳' "正在获取 ${name} 最新版本信息..." >&2
 
@@ -66,10 +69,10 @@ _resolve_latest_release_tag() {
             --silent \
             --show-error \
             --fail \
-            --insecure \
             --location \
             --retry 1 \
             -H 'Accept: application/vnd.github+json' \
+            "${curl_tls_args[@]}" \
             "$request_url"
     ) || {
         [ -n "$fallback_version" ] && {
@@ -229,6 +232,8 @@ _download_zip() {
     )
 
     local item target_zips=()
+    local curl_tls_args=()
+    [ "${CLASH_INSECURE_DOWNLOAD:-}" = 1 ] && curl_tls_args+=(--insecure)
     _okcat '🖥️ ' "系统架构：$arch $level"
     for item in "$@"; do
         local url="${urls[$item]}"
@@ -240,9 +245,9 @@ _download_zip() {
             --progress-bar \
             --show-error \
             --fail \
-            --insecure \
             --location \
             --retry 1 \
+            "${curl_tls_args[@]}" \
             --output "$target" \
             "$url"
         case "$item" in

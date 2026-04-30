@@ -70,7 +70,7 @@ _init_systemd_service() {
         service_sudo_is_active=("${service_is_active[@]}")
         service_sudo_log=("${service_log[@]}")
         SYSTEMD_WANTED_BY='multi-user.target'
-        SYSTEMD_CAPABILITIES='CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SYS_TIME CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE'
+        SYSTEMD_CAPABILITIES='CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE'
         return 0
     fi
 
@@ -86,11 +86,11 @@ _init_systemd_service() {
     service_status=(systemctl --user status "$KERNEL_NAME")
     service_is_active=(systemctl --user is-active "$KERNEL_NAME")
 
-    service_sudo_start=(sudo sh -c '"nohup' "$BIN_KERNEL" -d "$CLASH_RESOURCES_DIR" -f "$CLASH_CONFIG_RUNTIME" '<' '/dev/null' '>' "$FILE_LOG" '2>\&1' '\&"')
-    service_sudo_stop=($(_build_root_process_cmd stop))
-    service_sudo_status=($(_build_root_process_cmd status))
-    service_sudo_is_active=($(_build_root_process_cmd is_active))
-    service_sudo_log=(sudo tail -n 200 "$FILE_LOG")
+    service_sudo_start_cmd=$(_build_sudo_nohup_cmd "$BIN_KERNEL" "$CLASH_RESOURCES_DIR" "$CLASH_CONFIG_RUNTIME" "$FILE_LOG")
+    service_sudo_stop_cmd=$(_build_root_process_cmd stop)
+    service_sudo_status_cmd=$(_build_root_process_cmd status)
+    service_sudo_is_active_cmd=$(_build_root_process_cmd is_active)
+    service_sudo_log_cmd=$(_build_shell_cmd sudo tail -n 200 "$FILE_LOG")
 
     SYSTEMD_WANTED_BY='default.target'
     SYSTEMD_CAPABILITIES=''
@@ -121,6 +121,46 @@ _build_root_process_cmd() {
     esac
 }
 
+# 转义 sed 替换值，避免路径或命令中的特殊字符破坏模板渲染
+_sed_replacement_escape() {
+    local value=$1
+    value=${value//\\/\\\\}
+    value=${value//&/\\&}
+    value=${value//\#/\\#}
+    printf '%s' "$value"
+}
+
+# 生成 systemd ExecStart 可安全识别的双引号参数
+_systemd_quote() {
+    local value=$1
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    printf '"%s"' "$value"
+}
+
+# 将命令参数拼接为可直接写入 bash 脚本的命令行
+_build_shell_cmd() {
+    local arg quoted cmd=''
+    for arg in "$@"; do
+        printf -v quoted '%q' "$arg"
+        cmd="${cmd:+$cmd }$quoted"
+    done
+    printf '%s' "$cmd"
+}
+
+# 构建普通用户 Tun 场景下需要 sudo 执行的后台启动命令
+_build_sudo_nohup_cmd() {
+    local kernel_bin=$1
+    local resources_dir=$2
+    local runtime_path=$3
+    local log_path=$4
+    printf "sudo sh -c 'nohup \"\$1\" -d \"\$2\" -f \"\$3\" < /dev/null > \"\$4\" 2>&1 &' _ %s %s %s %s" \
+        "$(_build_shell_cmd "$kernel_bin")" \
+        "$(_build_shell_cmd "$resources_dir")" \
+        "$(_build_shell_cmd "$runtime_path")" \
+        "$(_build_shell_cmd "$log_path")"
+}
+
 # 判断当前用户是否可用 systemd --user
 _has_systemd_user() {
     command -v systemctl >/dev/null 2>&1 || return 1
@@ -135,23 +175,40 @@ _install_service() {
     local clash_cmd_dir="${CLASH_BASE_DIR}/scripts/cmd"
 
     local cmd_path="${BIN_KERNEL}"
-    local cmd_arg="-d ${CLASH_RESOURCES_DIR} -f ${CLASH_CONFIG_RUNTIME}"
-    local cmd_full="${BIN_KERNEL} -d ${CLASH_RESOURCES_DIR} -f ${CLASH_CONFIG_RUNTIME}"
+    local cmd_arg="-d $(_systemd_quote "$CLASH_RESOURCES_DIR") -f $(_systemd_quote "$CLASH_CONFIG_RUNTIME")"
+    local cmd_full="$(_systemd_quote "$BIN_KERNEL") -d $(_systemd_quote "$CLASH_RESOURCES_DIR") -f $(_systemd_quote "$CLASH_CONFIG_RUNTIME")"
+    local placeholder_start placeholder_sudo_start placeholder_sudo_stop placeholder_status
+    local placeholder_is_active placeholder_sudo_status placeholder_sudo_is_active
+    local placeholder_stop placeholder_log placeholder_sudo_log placeholder_follow_log
+    local placeholder_watch_proxy
+
+    placeholder_start=$(_build_shell_cmd "${service_start[@]}")
+    placeholder_sudo_start=${service_sudo_start_cmd:-$(_build_shell_cmd "${service_sudo_start[@]}")}
+    placeholder_sudo_stop=${service_sudo_stop_cmd:-$(_build_shell_cmd "${service_sudo_stop[@]}")}
+    placeholder_status=$(_build_shell_cmd "${service_status[@]}")
+    placeholder_is_active=$(_build_shell_cmd "${service_is_active[@]}")
+    placeholder_sudo_status=${service_sudo_status_cmd:-$(_build_shell_cmd "${service_sudo_status[@]}")}
+    placeholder_sudo_is_active=${service_sudo_is_active_cmd:-$(_build_shell_cmd "${service_sudo_is_active[@]}")}
+    placeholder_stop=$(_build_shell_cmd "${service_stop[@]}")
+    placeholder_log=$(_build_shell_cmd "${service_log[@]}")
+    placeholder_sudo_log=${service_sudo_log_cmd:-$(_build_shell_cmd "${service_sudo_log[@]}")}
+    placeholder_follow_log=$(_build_shell_cmd "${service_follow_log[@]}")
+    placeholder_watch_proxy=$(_build_shell_cmd "${service_watch_proxy[@]}")
 
     [ -n "$service_src" ] && {
         mkdir -p "$(dirname "$service_target")"
         /usr/bin/install -D -m "${service_mode:-0755}" "$service_src" "$service_target"
-        ((${#service_add[@]})) && "${service_add[@]}"
+        declare -p service_add >/dev/null 2>&1 && ((${#service_add[@]})) && "${service_add[@]}"
         sed -i \
-            -e "s#placeholder_cmd_path#$cmd_path#g" \
-            -e "s#placeholder_cmd_args#$cmd_arg#g" \
-            -e "s#placeholder_cmd_full#$cmd_full#g" \
-            -e "s#placeholder_log_file#$FILE_LOG#g" \
-            -e "s#placeholder_pid_file#$FILE_PID#g" \
-            -e "s#placeholder_kernel_name#$KERNEL_NAME#g" \
-            -e "s#placeholder_kernel_desc#$kernel_desc#g" \
-            -e "s#placeholder_systemd_capabilities#$SYSTEMD_CAPABILITIES#g" \
-            -e "s#placeholder_wanted_by#$SYSTEMD_WANTED_BY#g" \
+            -e "s#placeholder_cmd_path#$(_sed_replacement_escape "$cmd_path")#g" \
+            -e "s#placeholder_cmd_args#$(_sed_replacement_escape "$cmd_arg")#g" \
+            -e "s#placeholder_cmd_full#$(_sed_replacement_escape "$cmd_full")#g" \
+            -e "s#placeholder_log_file#$(_sed_replacement_escape "$FILE_LOG")#g" \
+            -e "s#placeholder_pid_file#$(_sed_replacement_escape "$FILE_PID")#g" \
+            -e "s#placeholder_kernel_name#$(_sed_replacement_escape "$KERNEL_NAME")#g" \
+            -e "s#placeholder_kernel_desc#$(_sed_replacement_escape "$kernel_desc")#g" \
+            -e "s#placeholder_systemd_capabilities#$(_sed_replacement_escape "$SYSTEMD_CAPABILITIES")#g" \
+            -e "s#placeholder_wanted_by#$(_sed_replacement_escape "$SYSTEMD_WANTED_BY")#g" \
             "$service_target"
         [ -z "$SYSTEMD_CAPABILITIES" ] && sed -i \
             -e '/^CapabilityBoundingSet=$/d' \
@@ -159,29 +216,29 @@ _install_service() {
             "$service_target"
     }
     sed -i \
-        -e "s#placeholder_start#${service_start[*]}#g" \
-        -e "s#placeholder_sudo_start#${service_sudo_start[*]}#g" \
-        -e "s#placeholder_sudo_stop#${service_sudo_stop[*]}#g" \
-        -e "s#placeholder_status#${service_status[*]}#g" \
-        -e "s#placeholder_is_active#${service_is_active[*]}#g" \
-        -e "s#placeholder_sudo_status#${service_sudo_status[*]}#g" \
-        -e "s#placeholder_sudo_is_active#${service_sudo_is_active[*]}#g" \
-        -e "s#placeholder_stop#${service_stop[*]}#g" \
-        -e "s#placeholder_log#${service_log[*]}#g" \
-        -e "s#placeholder_sudo_log#${service_sudo_log[*]}#g" \
-        -e "s#placeholder_follow_log#${service_follow_log[*]}#g" \
-        -e "s#placeholder_watch_proxy#${service_watch_proxy[*]}#g" \
+        -e "s#placeholder_start#$(_sed_replacement_escape "$placeholder_start")#g" \
+        -e "s#placeholder_sudo_start#$(_sed_replacement_escape "$placeholder_sudo_start")#g" \
+        -e "s#placeholder_sudo_stop#$(_sed_replacement_escape "$placeholder_sudo_stop")#g" \
+        -e "s#placeholder_status#$(_sed_replacement_escape "$placeholder_status")#g" \
+        -e "s#placeholder_is_active#$(_sed_replacement_escape "$placeholder_is_active")#g" \
+        -e "s#placeholder_sudo_status#$(_sed_replacement_escape "$placeholder_sudo_status")#g" \
+        -e "s#placeholder_sudo_is_active#$(_sed_replacement_escape "$placeholder_sudo_is_active")#g" \
+        -e "s#placeholder_stop#$(_sed_replacement_escape "$placeholder_stop")#g" \
+        -e "s#placeholder_log#$(_sed_replacement_escape "$placeholder_log")#g" \
+        -e "s#placeholder_sudo_log#$(_sed_replacement_escape "$placeholder_sudo_log")#g" \
+        -e "s#placeholder_follow_log#$(_sed_replacement_escape "$placeholder_follow_log")#g" \
+        -e "s#placeholder_watch_proxy#$(_sed_replacement_escape "$placeholder_watch_proxy")#g" \
         "${clash_cmd_dir}/clashctl.sh"
 
-    "${service_enable[@]}" >&/dev/null && _okcat '🚀' '已设置开机自启'
     ((${#service_reload[@]})) && "${service_reload[@]}"
+    "${service_enable[@]}" >&/dev/null && _okcat '🚀' '已设置开机自启'
 }
 
 # 卸载服务文件并撤销开机自启
 _uninstall_service() {
     _detect_init
     "${service_disable[@]}" >&/dev/null
-    ((${#service_del[@]})) && "${service_del[@]}"
+    declare -p service_del >/dev/null 2>&1 && ((${#service_del[@]})) && "${service_del[@]}"
     rm -f "$service_target"
     ((${#service_reload[@]})) && "${service_reload[@]}"
 }

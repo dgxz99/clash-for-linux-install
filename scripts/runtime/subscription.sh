@@ -19,23 +19,30 @@ _download_config() {
 _download_raw_config() {
     local dest=$1
     local url=$2
+    local curl_tls_args=()
+    local wget_tls_args=()
+
+    [ "${CLASH_INSECURE_DOWNLOAD:-}" = 1 ] && {
+        curl_tls_args+=(--insecure)
+        wget_tls_args+=(--no-check-certificate)
+    }
 
     curl \
         --silent \
         --show-error \
         --fail \
-        --insecure \
         --location \
         --max-time 5 \
         --retry 1 \
+        "${curl_tls_args[@]}" \
         --user-agent "$CLASH_SUB_UA" \
         --output "$dest" \
         "$url" ||
         wget \
             --no-verbose \
-            --no-check-certificate \
             --timeout 5 \
             --tries 1 \
+            "${wget_tls_args[@]}" \
             --user-agent "$CLASH_SUB_UA" \
             --output-document "$dest" \
             "$url"

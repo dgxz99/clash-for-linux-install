@@ -17,7 +17,7 @@ _init_install_context
 _parse_install_args() {
     for arg in "$@"; do
         case $arg in
-        http*)
+        http://* | https://* | file://*)
             CLASH_CONFIG_URL=$arg
             ;;
         esac
@@ -37,10 +37,28 @@ _prepare_install_context() {
 
 # 复制仓库文件并回写安装运行环境
 _copy_install_files() {
-    /bin/cp -rf . "$CLASH_BASE_DIR"
+    local item
+    for item in scripts resources .env README.md LICENSE; do
+        /bin/cp -rf "$item" "$CLASH_BASE_DIR/"
+    done
     touch "$CLASH_CONFIG_BASE"
     _set_envs
-    _is_regular_sudo && chown -R "$SUDO_USER" "$CLASH_BASE_DIR"
+    _is_regular_sudo && _harden_regular_sudo_install_permissions
+    return 0
+}
+
+# sudo 安装时避免 root 服务执行用户可替换的二进制
+_harden_regular_sudo_install_permissions() {
+    local user_group
+    user_group=$(id -gn "$SUDO_USER")
+
+    chown -R root:root "$CLASH_BASE_DIR"
+    chmod 0755 "$CLASH_BASE_DIR"
+    chmod -R go-w "$BIN_BASE_DIR" "${CLASH_BASE_DIR}/scripts"
+
+    touch "$BIN_SUBCONVERTER_LOG"
+    chown -R "$SUDO_USER:$user_group" "$CLASH_RESOURCES_DIR"
+    chown "$SUDO_USER:$user_group" "$BIN_SUBCONVERTER_CONFIG" "$BIN_SUBCONVERTER_LOG"
 }
 
 # 安装 systemd 服务与 shell 命令入口
@@ -64,7 +82,8 @@ _finalize_install() {
 # 若基础配置已存在则自动作为第一个订阅导入
 _import_initial_profile() {
     _valid_config "$CLASH_CONFIG_BASE" && CLASH_CONFIG_URL="file://$CLASH_CONFIG_BASE"
-    _quit "clashsub add $CLASH_CONFIG_URL && clashsub use 1"
+    clashsub add "$CLASH_CONFIG_URL" && clashsub use 1
+    _finish_context $?
 }
 
 _prepare_install_context "$@"

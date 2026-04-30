@@ -63,7 +63,9 @@ _sub_add() {
         read -r url
         [ -z "$url" ] && _error_quit "订阅链接不能为空"
     }
-    _get_url_by_id "$id" >/dev/null && _error_quit "该订阅链接已存在"
+    local exists_id
+    exists_id=$(_get_id_by_url "$url" 2>/dev/null) && [ -n "$exists_id" ] &&
+        _error_quit "该订阅链接已存在：[$exists_id]"
 
     local config_temp profiles_meta profile_dir yq_bin subconverter_log
     config_temp=$(_config_temp_path)
@@ -101,13 +103,14 @@ _sub_del() {
         read -r id
         [ -z "$id" ] && _error_quit "订阅 id 不能为空"
     }
-    local profile_path url
+    _valid_profile_id "$id"
+    local profile_path url use
     profile_path=$(_get_path_by_id "$id") || _error_quit "订阅 id 不存在，请检查"
     url=$(_get_url_by_id "$id")
     use=$("$(_yq_bin)" '.use // ""' "$(_profiles_meta_path)")
     [ "$use" = "$id" ] && _error_quit "删除失败：订阅 $id 正在使用中，请先切换订阅"
     /usr/bin/rm -f "$profile_path"
-    "$(_yq_bin)" -i "del(.profiles[] | select(.id == \"$id\"))" "$(_profiles_meta_path)"
+    "$(_yq_bin)" -i "del(.profiles[] | select(.id == $id))" "$(_profiles_meta_path)"
     _logging_sub "➖ 已删除订阅：[$id] $url"
     _okcat '🎉' "订阅已删除：[$id] $url"
 }
@@ -128,6 +131,7 @@ _sub_use() {
         read -r id
         [ -z "$id" ] && _error_quit "订阅 id 不能为空"
     }
+    _valid_profile_id "$id"
     local profile_path url
     profile_path=$(_get_path_by_id "$id") || _error_quit "订阅 id 不存在，请检查"
     url=$(_get_url_by_id "$id")
@@ -140,19 +144,34 @@ _sub_use() {
 
 # 通过订阅 id 获取配置文件路径
 _get_path_by_id() {
-    "$(_yq_bin)" -e ".profiles[] | select(.id == \"$1\") | .path" "$(_profiles_meta_path)" 2>/dev/null
+    _valid_profile_id "$1" || return 1
+    "$(_yq_bin)" -e ".profiles[] | select(.id == $1) | .path" "$(_profiles_meta_path)" 2>/dev/null
 }
 
 # 通过订阅 id 获取原始订阅地址
 _get_url_by_id() {
-    "$(_yq_bin)" -e ".profiles[] | select(.id == \"$1\") | .url" "$(_profiles_meta_path)" 2>/dev/null
+    _valid_profile_id "$1" || return 1
+    "$(_yq_bin)" -e ".profiles[] | select(.id == $1) | .url" "$(_profiles_meta_path)" 2>/dev/null
+}
+
+# 通过订阅 URL 获取订阅 id
+_get_id_by_url() {
+    PROFILE_URL=$1 "$(_yq_bin)" -e '.profiles[] | select(.url == strenv(PROFILE_URL)) | .id' "$(_profiles_meta_path)" 2>/dev/null
+}
+
+# 校验订阅 id，避免拼接 yq 表达式时引入非法内容
+_valid_profile_id() {
+    [[ "$1" =~ ^[0-9]+$ ]] || {
+        _failcat "订阅 id 必须是数字：$1"
+        return 1
+    }
 }
 
 # 更新订阅，可选启用定时更新和强制转换
 _sub_update() {
-    local arg is_convert
-    for arg in "$@"; do
-        case $arg in
+    local id='' is_convert=false
+    while [ "$#" -gt 0 ]; do
+        case $1 in
         --auto)
             command -v crontab >/dev/null || _error_quit "未检测到 crontab 命令，请先安装 cron 服务"
             crontab -l | grep -qs 'clashsub update' || {
@@ -166,12 +185,19 @@ _sub_update() {
             ;;
         --convert)
             is_convert=true
-            shift
+            ;;
+        -*)
+            _error_quit "未知参数：$1"
+            ;;
+        *)
+            [ -z "$id" ] || _error_quit "只能指定一个订阅 id"
+            id=$1
             ;;
         esac
+        shift
     done
-    local id=$1
     [ -z "$id" ] && id=$("$(_yq_bin)" '.use // 1' "$(_profiles_meta_path)")
+    _valid_profile_id "$id"
     local url profile_path
     url=$(_get_url_by_id "$id") || _error_quit "订阅 id 不存在，请检查"
     profile_path=$(_get_path_by_id "$id")
@@ -192,6 +218,7 @@ _sub_update() {
     }
     _logging_sub "✅ 订阅更新成功：[$id] $url"
     cat "$(_config_temp_path)" >"$profile_path"
+    local use
     use=$("$(_yq_bin)" '.use // ""' "$(_profiles_meta_path)")
     [ "$use" = "$id" ] && clashsub use "$use" && return
     _okcat '订阅已更新'

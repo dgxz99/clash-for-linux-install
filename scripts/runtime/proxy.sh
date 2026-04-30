@@ -233,6 +233,10 @@ EOF
         _okcat "当前密钥：$(_get_secret)"
         ;;
     1)
+        [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] || {
+            _failcat "密钥仅支持字母、数字、点、下划线和短横线"
+            return 1
+        }
         "$(_yq_bin)" -i ".secret = \"$1\"" "$(_config_mixin_path)" || {
             _failcat "密钥更新失败，请重新输入"
             return 1
